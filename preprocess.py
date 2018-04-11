@@ -3,16 +3,22 @@ import argparse
 import torch
 import transformer.Constants as Constants
 
-def read_instances_from_file(inst_file, max_sent_len, keep_case):
-    ''' Convert file into word seq lists and vocab '''
+def read_instances_from_file(inst_file, max_sent_len, keep_case,characters=False):
+    ''' Convert file into word seq lists and vocab
+    When characters is True, split words into individual characters. '''
 
     word_insts = []
     trimmed_sent_count = 0
+    import itertools
     with open(inst_file) as f:
         for sent in f:
             if not keep_case:
                 sent = sent.lower()
-            words = sent.split()
+            if characters:
+                words =  list(itertools.chain(*[ list(word) for word in sent.split() ]))
+
+            else:
+                words = sent.split()
             if len(words) > max_sent_len:
                 trimmed_sent_count += 1
             word_inst = words[:max_sent_len]
@@ -77,6 +83,7 @@ def main():
     parser.add_argument('-max_len', '--max_word_seq_len', type=int, default=50)
     parser.add_argument('-min_word_count', type=int, default=5)
     parser.add_argument('-keep_case', action='store_true')
+    parser.add_argument('-characters', action='store_true')
     parser.add_argument('-share_vocab', action='store_true')
     parser.add_argument('-vocab', default=None)
 
@@ -85,9 +92,9 @@ def main():
 
     # Training set
     train_src_word_insts = read_instances_from_file(
-        opt.train_src, opt.max_word_seq_len, opt.keep_case)
+        opt.train_src, opt.max_word_seq_len, opt.keep_case,characters=opt.characters)
     train_tgt_word_insts = read_instances_from_file(
-        opt.train_tgt, opt.max_word_seq_len, opt.keep_case)
+        opt.train_tgt, opt.max_word_seq_len, opt.keep_case,characters=opt.characters)
 
     if len(train_src_word_insts) != len(train_tgt_word_insts):
         print('[Warning] The training instance count is not equal.')
@@ -101,9 +108,9 @@ def main():
 
     # Validation set
     valid_src_word_insts = read_instances_from_file(
-        opt.valid_src, opt.max_word_seq_len, opt.keep_case)
+        opt.valid_src, opt.max_word_seq_len, opt.keep_case,characters=opt.characters)
     valid_tgt_word_insts = read_instances_from_file(
-        opt.valid_tgt, opt.max_word_seq_len, opt.keep_case)
+        opt.valid_tgt, opt.max_word_seq_len, opt.keep_case,characters=opt.characters)
 
     if len(valid_src_word_insts) != len(valid_tgt_word_insts):
         print('[Warning] The validation instance count is not equal.')

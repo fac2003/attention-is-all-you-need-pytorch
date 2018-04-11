@@ -6,6 +6,7 @@ import argparse
 import math
 import time
 
+from torch.autograd import Variable
 from tqdm import tqdm
 import torch
 import torch.nn as nn
@@ -14,6 +15,7 @@ import transformer.Constants as Constants
 from transformer.Models import Transformer
 from transformer.Optim import ScheduledOptim
 from DataLoader import DataLoader
+
 
 def get_performance(crit, pred, gold, smoothing=False, num_class=None):
     ''' Apply label smoothing if needed '''
@@ -25,17 +27,19 @@ def get_performance(crit, pred, gold, smoothing=False, num_class=None):
         gold = gold * (1 - eps) + (1 - gold) * eps / num_class
         raise NotImplementedError
     num_words=pred.size(2)
-    loss = crit(pred.view(-1,num_words), gold.contiguous().view(-1))
+    predicted_seq = pred.view(-1, num_words)
+    gold_reshaped=gold.narrow(1, 0,pred.size(1)).contiguous().view(-1)
+    loss = crit(predicted_seq, gold_reshaped )
     max_value, pred_tokens=torch.max(pred,dim=2)
     #pred = pred.max(1)[1]
 
-    gold = gold.contiguous().view(-1)
-    n_correct = pred_tokens.data.eq(gold.data)
-    n_correct = n_correct.masked_select(gold.ne(Constants.PAD).data).sum()
+    #gold = gold.contiguous().view(-1)
+    n_correct = pred_tokens.data.eq(gold_reshaped.data)
+    n_correct = n_correct.masked_select(gold_reshaped.ne(Constants.PAD).data).sum()
 
     return loss, n_correct
 
-def train_epoch(model, training_data, crit, optimizer):
+def train_epoch(model, training_data, crit, optimizer, opt):
     ''' Epoch operation in training phase'''
 
     model.train()
@@ -43,21 +47,29 @@ def train_epoch(model, training_data, crit, optimizer):
     total_loss = 0
     n_total_words = 0
     n_total_correct = 0
-
+    padding_indices = Variable(torch.LongTensor([Constants.PAD]),requires_grad=False)
+    signal_indices = torch.LongTensor(range(1, opt.d_model))
     for batch in tqdm(
             training_data, mininterval=2,
             desc='  - (Training)   ', leave=False):
 
         # prepare data
         src, tgt = batch
-        gold = tgt[0][:, 1:]
+
+
 
         # forward
         optimizer.zero_grad()
-        (pred, encoded_output) = model(src, tgt)
+        # put source in gold:
+        target = (Variable(src[0].data, requires_grad=False), Variable(src[1].data+1, requires_grad=False))
+
+        (pred, encoded_output) = model(src, target)
 
         # backward
-        loss, n_correct = get_performance(crit, pred, gold)
+
+        loss, n_correct = get_performance(crit, pred, target[0])
+        padding_l1_sum=torch.norm(torch.index_select(encoded_output,2,padding_indices),p=1)
+        loss=loss-padding_l1_sum
         loss.backward()
 
         # update parameters
@@ -65,7 +77,7 @@ def train_epoch(model, training_data, crit, optimizer):
         optimizer.update_learning_rate()
 
         # note keeping
-        n_words = gold.data.ne(Constants.PAD).sum()
+        n_words = src[0].data.ne(Constants.PAD).sum()
         n_total_words += n_words
         n_total_correct += n_correct
         total_loss += loss.data[0]
@@ -90,7 +102,7 @@ def eval_epoch(model, validation_data, crit):
         gold = tgt[0][:, 1:]
 
         # forward
-        pred = model(src, tgt)
+        (pred,encoded_output) = model(src, tgt)
         loss, n_correct = get_performance(crit, pred, gold)
 
         # note keeping
@@ -123,7 +135,7 @@ def train(model, training_data, validation_data, crit, optimizer, opt):
         print('[ Epoch', epoch_i, ']')
 
         start = time.time()
-        train_loss, train_accu = train_epoch(model, training_data, crit, optimizer)
+        train_loss, train_accu = train_epoch(model, training_data, crit, optimizer,opt)
         print('  - (Training)   ppl: {ppl: 8.5f}, accuracy: {accu:3.3f} %, '\
               'elapse: {elapse:3.3f} min'.format(
                   ppl=math.exp(min(train_loss, 100)), accu=100*train_accu,
@@ -169,7 +181,7 @@ def main():
 
     parser.add_argument('-data', required=True)
 
-    parser.add_argument('-epoch', type=int, default=10)
+    parser.add_argument('-epoch', type=int, default=100)
     parser.add_argument('-batch_size', type=int, default=64)
 
     #parser.add_argument('-d_word_vec', type=int, default=512)
@@ -180,6 +192,7 @@ def main():
 
     parser.add_argument('-n_head', type=int, default=8)
     parser.add_argument('-n_layers', type=int, default=6)
+    parser.add_argument('-max_size', type=int, default=0)
     parser.add_argument('-n_warmup_steps', type=int, default=4000)
 
     parser.add_argument('-dropout', type=float, default=0.1)
@@ -201,19 +214,22 @@ def main():
     opt.max_token_seq_len = data['settings'].max_token_seq_len
 
     #========= Preparing DataLoader =========#
+    max_size_src=opt.max_size if opt.max_size is not 0 else len(data['train']['src'])
+    max_size_tgt=opt.max_size if opt.max_size is not 0 else len(data['train']['tgt'])
     training_data = DataLoader(
         data['dict']['src'],
         data['dict']['tgt'],
-        src_insts=data['train']['src'],
-        tgt_insts=data['train']['tgt'],
+        src_insts=data['train']['src'][0:max_size_src],
+        tgt_insts=data['train']['tgt'][0:max_size_tgt],
         batch_size=opt.batch_size,
         cuda=opt.cuda)
-
+    max_size_src = opt.max_size if opt.max_size is not 0 else len(data['valid']['src'])
+    max_size_tgt = opt.max_size if opt.max_size is not 0 else len(data['valid']['tgt'])
     validation_data = DataLoader(
         data['dict']['src'],
         data['dict']['tgt'],
-        src_insts=data['valid']['src'],
-        tgt_insts=data['valid']['tgt'],
+        src_insts=data['valid']['src'][0:max_size_src],
+        tgt_insts=data['valid']['tgt'][0:max_size_tgt],
         batch_size=opt.batch_size,
         shuffle=False,
         test=True,

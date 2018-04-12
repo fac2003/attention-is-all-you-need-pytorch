@@ -85,6 +85,7 @@ def main():
     parser.add_argument('-keep_case', action='store_true')
     parser.add_argument('-characters', action='store_true')
     parser.add_argument('-share_vocab', action='store_true')
+    parser.add_argument('-auto_encoder', action='store_true')
     parser.add_argument('-vocab', default=None)
 
     opt = parser.parse_args()
@@ -93,8 +94,12 @@ def main():
     # Training set
     train_src_word_insts = read_instances_from_file(
         opt.train_src, opt.max_word_seq_len, opt.keep_case,characters=opt.characters)
-    train_tgt_word_insts = read_instances_from_file(
-        opt.train_tgt, opt.max_word_seq_len, opt.keep_case,characters=opt.characters)
+    if not opt.auto_encoder:
+        train_tgt_word_insts = read_instances_from_file(
+            opt.train_tgt, opt.max_word_seq_len, opt.keep_case,characters=opt.characters)
+    else:
+        train_tgt_word_insts =read_instances_from_file(
+        opt.train_src, opt.max_word_seq_len, opt.keep_case,characters=opt.characters)
 
     if len(train_src_word_insts) != len(train_tgt_word_insts):
         print('[Warning] The training instance count is not equal.')

@@ -35,6 +35,10 @@ If there is any suggestion or error, feel free to fire an issue to let me know. 
 
 The example below uses the Moses tokenizer (http://www.statmt.org/moses/) to prepare the data and the moses BLEU script for evaluation.
 
+# on windows:
+```bash
+ alias wget="c:/Program\ Files/Git/bin/wget.exe"
+```
 ```bash
 wget https://raw.githubusercontent.com/moses-smt/mosesdecoder/master/scripts/tokenizer/tokenizer.perl
 wget https://raw.githubusercontent.com/moses-smt/mosesdecoder/master/scripts/share/nonbreaking_prefixes/nonbreaking_prefix.de
@@ -63,9 +67,9 @@ for l in en de; do for f in data/multi30k/*.$l; do perl tokenizer.perl -a -no-es
 python preprocess.py -train_src data/multi30k/train.en.atok -train_tgt data/multi30k/train.de.atok -valid_src data/multi30k/val.en.atok -valid_tgt data/multi30k/val.de.atok -save_data data/multi30k.atok.low.pt
 ```
 
-To preprocessing as characters:
+To preprocessing as characters to use with auto-encoder:
 ```bash
-python preprocess.py -characters -max_len 1000 -min_word_count 1 -train_src data/multi30k/train.en.atok -train_tgt data/multi30k/train.de.atok -valid_src data/multi30k/val.en.atok -valid_tgt data/multi30k/val.de.atok -save_data data/multi30k.atok.low.char.pt
+python preprocess.py -characters -auto_encoder -max_len 1000 -min_word_count 1 -train_src data/multi30k/train.en.atok -train_tgt data/multi30k/train.de.atok -valid_src data/multi30k/val.en.atok -valid_tgt data/multi30k/val.de.atok -save_data data/multi30k.atok.low.char.pt
 ```
 ### 2) Train the model
 ```bash

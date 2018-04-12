@@ -55,13 +55,17 @@ def train_epoch(model, training_data, crit, optimizer, opt):
 
         # prepare data
         src, tgt = batch
+        target = (Variable(src[0].data, requires_grad=False), Variable(src[1].data + 1, requires_grad=False))
 
+        # move the batch to GPU:
+        if opt.cuda:
+            src= src.cuda(async=True)
+            target= target.cuda(async=True)
 
 
         # forward
         optimizer.zero_grad()
         # put source in gold:
-        target = (Variable(src[0].data, requires_grad=False), Variable(src[1].data+1, requires_grad=False))
 
         (pred, encoded_output) = model(src, target)
 
@@ -222,7 +226,7 @@ def main():
         src_insts=data['train']['src'][0:max_size_src],
         tgt_insts=data['train']['tgt'][0:max_size_tgt],
         batch_size=opt.batch_size,
-        cuda=opt.cuda)
+        cuda=False)
     max_size_src = opt.max_size if opt.max_size is not 0 else len(data['valid']['src'])
     max_size_tgt = opt.max_size if opt.max_size is not 0 else len(data['valid']['tgt'])
     validation_data = DataLoader(
@@ -233,7 +237,7 @@ def main():
         batch_size=opt.batch_size,
         shuffle=False,
         test=True,
-        cuda=opt.cuda)
+        cuda=False)
 
     opt.src_vocab_size = training_data.src_vocab_size
     opt.tgt_vocab_size = training_data.tgt_vocab_size

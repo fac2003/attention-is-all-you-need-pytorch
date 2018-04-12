@@ -49,18 +49,22 @@ def train_epoch(model, training_data, crit, optimizer, opt):
     n_total_correct = 0
     padding_indices = Variable(torch.LongTensor([Constants.PAD]),requires_grad=False)
     signal_indices = torch.LongTensor(range(1, opt.d_model))
+    if opt.cuda:
+        padding_indices=padding_indices.cuda()
+        signal_indices=signal_indices.cuda()
+
     for batch in tqdm(
             training_data, mininterval=2,
             desc='  - (Training)   ', leave=False):
 
         # prepare data
         src, tgt = batch
-        target = (Variable(src[0].data, requires_grad=False), Variable(src[1].data + 1, requires_grad=False))
+        target = (Variable(src[0].data, requires_grad=False), Variable(src[1].data , requires_grad=False))
 
         # move the batch to GPU:
-        if opt.cuda:
-            src= src.cuda(async=True)
-            target= target.cuda(async=True)
+       # if opt.cuda:
+       #     src=( src[0].cuda(async=True),src[1].cuda(async=True))
+       #     target=(target[0].cuda(async=True), target[1].cuda(async=True))
 
 
         # forward
@@ -72,8 +76,8 @@ def train_epoch(model, training_data, crit, optimizer, opt):
         # backward
 
         loss, n_correct = get_performance(crit, pred, target[0])
-        padding_l1_sum=torch.norm(torch.index_select(encoded_output,2,padding_indices),p=1)
-        loss=loss-padding_l1_sum
+        #padding_l1_sum=torch.norm(torch.index_select(encoded_output,2,padding_indices),p=1)
+        #loss=loss-padding_l1_sum
         loss.backward()
 
         # update parameters
@@ -103,14 +107,14 @@ def eval_epoch(model, validation_data, crit):
 
         # prepare data
         src, tgt = batch
-        gold = tgt[0][:, 1:]
+        target = (Variable(src[0].data, requires_grad=False), Variable(src[1].data, requires_grad=False))
 
         # forward
-        (pred,encoded_output) = model(src, tgt)
-        loss, n_correct = get_performance(crit, pred, gold)
+        (pred,encoded_output) = model(src, target)
+        loss, n_correct =  get_performance(crit, pred, target[0])
 
         # note keeping
-        n_words = gold.data.ne(Constants.PAD).sum()
+        n_words = src[0].data.ne(Constants.PAD).sum()
         n_total_words += n_words
         n_total_correct += n_correct
         total_loss += loss.data[0]
@@ -189,13 +193,13 @@ def main():
     parser.add_argument('-batch_size', type=int, default=64)
 
     #parser.add_argument('-d_word_vec', type=int, default=512)
-    parser.add_argument('-d_model', type=int, default=512)
-    parser.add_argument('-d_inner_hid', type=int, default=1024)
-    parser.add_argument('-d_k', type=int, default=64)
-    parser.add_argument('-d_v', type=int, default=64)
+    parser.add_argument('-d_model', type=int, default=16)
+    parser.add_argument('-d_inner_hid', type=int, default=32)
+    parser.add_argument('-d_k', type=int, default=8)
+    parser.add_argument('-d_v', type=int, default=8)
 
     parser.add_argument('-n_head', type=int, default=8)
-    parser.add_argument('-n_layers', type=int, default=6)
+    parser.add_argument('-n_layers', type=int, default=16)
     parser.add_argument('-max_size', type=int, default=0)
     parser.add_argument('-n_warmup_steps', type=int, default=4000)
 
@@ -226,7 +230,7 @@ def main():
         src_insts=data['train']['src'][0:max_size_src],
         tgt_insts=data['train']['tgt'][0:max_size_tgt],
         batch_size=opt.batch_size,
-        cuda=False)
+        cuda=opt.cuda)
     max_size_src = opt.max_size if opt.max_size is not 0 else len(data['valid']['src'])
     max_size_tgt = opt.max_size if opt.max_size is not 0 else len(data['valid']['tgt'])
     validation_data = DataLoader(
@@ -235,9 +239,9 @@ def main():
         src_insts=data['valid']['src'][0:max_size_src],
         tgt_insts=data['valid']['tgt'][0:max_size_tgt],
         batch_size=opt.batch_size,
-        shuffle=False,
+        shuffle=opt.cuda,
         test=True,
-        cuda=False)
+        cuda=opt.cuda)
 
     opt.src_vocab_size = training_data.src_vocab_size
     opt.tgt_vocab_size = training_data.tgt_vocab_size

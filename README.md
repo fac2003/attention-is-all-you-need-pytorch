@@ -74,7 +74,7 @@ python train.py -data data/multi30k.atok.low.pt -save_model trained -save_mode b
 
 With characters:
 ```bash
-python train.py -data data/multi30k.atok.low.char.pt -save_model trained -save_mode best -proj_share_weight
+python train.py -data data/multi30k.atok.low.char.pt -embs_share_weight -save_model trained -save_mode best -proj_share_weight
 ```
 > If your source and target language share one common vocabulary, use the `-embs_share_weight` flag to enable the model to share source/target word embedding. 
 

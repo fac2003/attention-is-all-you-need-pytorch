@@ -70,13 +70,12 @@ def train_epoch(model, training_data, crit, optimizer, opt):
 
         (pred, encoded_output) = model(src, target)
 
+        padding_l1_sum = torch.max(model.padding)
+        average_padding_amount += padding_l1_sum.data[0]
         # backward
 
         loss, n_correct = get_performance(crit, pred, target[0])
-        time_steps=src[0].size(1)
-        batch_size = src[0].size(0)
-        padding_l1_sum=torch.sum(model.padding)/time_steps/batch_size
-        average_padding_amount+=padding_l1_sum.data[0]
+
         # encourage the encoding with lots of padding (minimize sequence length):
         loss=loss-padding_l1_sum
         loss.backward()

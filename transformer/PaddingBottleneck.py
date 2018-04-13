@@ -48,11 +48,10 @@ class PaddingBottleneck(torch.nn.Module):
         batch_size = x.size(0)
         encoding_dimension = x.size(1)
         time_steps = x.size(2)
-        if self.signal_indices is None:
-            self.signal_indices = Variable(torch.LongTensor(range(1, encoding_dimension)), requires_grad=True)
-            if x.is_cuda:
-                self.signal_indices=self.signal_indices.cuda()
-                self.padding_indices=self.padding_indices.cuda()
+        self.signal_indices = Variable(torch.LongTensor(range(1, encoding_dimension)), requires_grad=True)
+        if x.is_cuda:
+            self.signal_indices = self.signal_indices.cuda()
+            self.padding_indices = self.padding_indices.cuda()
 
         signal_norm_split, padding_split, \
         padding, signal = separate_signal_from_padding(x,
@@ -65,7 +64,7 @@ class PaddingBottleneck(torch.nn.Module):
         result= torch.cat([padding, signal_weighted], dim=1)
         return result
 
-
+#
 # k1=torch.ones(4,5)
 #
 #

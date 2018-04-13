@@ -4,10 +4,10 @@ from torch.autograd import Variable
 
 
 def separate_signal_from_padding(x, padding_indices, signal_indices):
-    padding = torch.index_select(x, 2, padding_indices)
-    signal = torch.index_select(x, 2, signal_indices)
+    padding = torch.index_select(x, 1, padding_indices)
+    signal = torch.index_select(x, 1, signal_indices)
     # torch.split(torch.sum(signal,dim=1),dim=0)
-    signal_norm = torch.norm(signal, dim=2, p=1)
+    signal_norm = torch.norm(signal, dim=1, p=1)
     # print("summed: {}".format(signal_summed))
     signal_norm_split = signal_norm.split(split_size=1, dim=0)
     padding_split = padding.split(split_size=1, dim=0)
@@ -17,7 +17,7 @@ def separate_signal_from_padding(x, padding_indices, signal_indices):
 def interleave(signal_norm_split, padding_split,batch_size, time_steps):
     rows = []
     for i in range(0, len(padding_split)):
-        row = torch.stack([padding_split[i].view(time_steps, 1), signal_norm_split[i].view(time_steps, 1)], dim=1)
+        row = torch.stack([padding_split[i].contiguous().view(time_steps, 1), signal_norm_split[i].contiguous().view(time_steps, 1)], dim=1)
 
         rows += [row]
     # rows
@@ -47,8 +47,8 @@ class PaddingBottleneck(torch.nn.Module):
 
     def forward(self, x):
         batch_size = x.size(0)
-        encoding_dimension = x.size(2)
-        time_steps = x.size(1)
+        encoding_dimension = x.size(1)
+        time_steps = x.size(2)
         if self.signal_indices is None:
             self.signal_indices = Variable(torch.LongTensor(range(1, encoding_dimension)), requires_grad=True)
             if x.is_cuda:
@@ -63,8 +63,23 @@ class PaddingBottleneck(torch.nn.Module):
         self.padding=padding
         interleaved = interleave(signal_norm_split, padding_split,batch_size=batch_size,time_steps=time_steps)
         weights, one_minus_weights = calculate_softmax_padding_weights(interleaved)
-        padding_weighted = (weights * padding.view(num_softmax_elements, -1)).view(batch_size, time_steps,1)
-        signal_weighted = (one_minus_weights * signal.view(num_softmax_elements, -1)).view(batch_size, time_steps,-1)
-
-        result= torch.cat([padding_weighted, signal_weighted], dim=2)
+        signal_weighted = one_minus_weights.view(2,1,5).repeat(1,3,1)*signal
+        result= torch.cat([padding, signal_weighted], dim=1)
         return result
+
+k1=torch.ones(4,5)
+
+
+k1[0]=(torch.Tensor([-10,-5,-1,-0.5,0]))
+k2=k1.clone()
+
+k2[0]=(torch.Tensor([1,5,10,20,30]))
+k2[1]=torch.ones(1,5)*2
+k2[2]=torch.ones(1,5)*2
+k2[3]=torch.ones(1,5)*2
+k=torch.stack([k1,k2])
+print(k)
+
+padder=PaddingBottleneck()
+v=Variable(k,requires_grad=False)
+print(padder( v))

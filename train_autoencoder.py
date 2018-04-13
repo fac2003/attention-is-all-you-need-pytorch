@@ -76,8 +76,9 @@ def train_epoch(model, training_data, crit, optimizer, opt):
         # backward
 
         loss, n_correct = get_performance(crit, pred, target[0])
-        #padding_l1_sum=torch.norm(torch.index_select(encoded_output,2,padding_indices),p=1)
-        #loss=loss-padding_l1_sum
+        padding_l1_sum=torch.norm(model.padding,p=1)
+        # encourage the encoding with lots of padding (minimize sequence length):
+        loss=loss-padding_l1_sum
         loss.backward()
 
         # update parameters

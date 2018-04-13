@@ -5,6 +5,7 @@ import numpy as np
 import transformer.Constants as Constants
 from transformer.Modules import BottleLinear as Linear
 from transformer.Layers import EncoderLayer, DecoderLayer
+from transformer.PaddingBottleneck import PaddingBottleneck
 
 __author__ = "Yu-Hsiang Huang"
 
@@ -158,7 +159,9 @@ class Transformer(nn.Module):
             d_inner_hid=d_inner_hid, dropout=dropout)
         self.tgt_word_proj = Linear(d_model, n_tgt_vocab, bias=False)
         self.dropout = nn.Dropout(dropout)
-
+        self.padding_bottleneck=PaddingBottleneck()
+        # We will store the padding tensor here to find it after a call to forward:
+        self.padding=None
         assert d_model == d_word_vec, \
         'To facilitate the residual connections, \
          the dimensions of all module output shall be the same.'
@@ -190,6 +193,8 @@ class Transformer(nn.Module):
         tgt_pos = tgt_pos[:, :-1]
 
         enc_output, *_ = self.encoder(src_seq, src_pos)
+        enc_output=self.padding_bottleneck(enc_output)
+        self.padding=self.padding_bottleneck.padding
         dec_output, *_ = self.decoder(tgt_seq, tgt_pos, src_seq, enc_output)
         seq_logit = self.tgt_word_proj(dec_output)
         #max, max_token=torch.max(seq_logit,dim=2)

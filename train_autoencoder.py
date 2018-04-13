@@ -75,8 +75,8 @@ def train_epoch(model, training_data, crit, optimizer, opt):
         loss, n_correct = get_performance(crit, pred, target[0])
         time_steps=src[0].size(1)
         batch_size = src[0].size(0)
-        padding_l1_sum=torch.sum(model.padding/time_steps/batch_size)
-        #average_padding_amount+=padding_l1_sum.data[0]
+        padding_l1_sum=torch.sum(model.padding)/time_steps/batch_size
+        average_padding_amount+=padding_l1_sum.data[0]
         # encourage the encoding with lots of padding (minimize sequence length):
         loss=loss-padding_l1_sum
         loss.backward()
@@ -116,8 +116,8 @@ def eval_epoch(model, validation_data, crit):
         # forward
         (pred,encoded_output) = model(src, target)
         loss, n_correct =  get_performance(crit, pred, target[0])
-        padding_min_logit = min(torch.min(model.padding),padding_min_logit)
-        padding_max_logit = max(torch.max(model.padding),padding_max_logit)
+        padding_min_logit = min(torch.min(model.padding).data[0],padding_min_logit)
+        padding_max_logit = max(torch.max(model.padding).data[0],padding_max_logit)
 
         # note keeping
         n_words = src[0].data.ne(Constants.PAD).sum()

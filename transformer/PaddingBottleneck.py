@@ -15,21 +15,20 @@ def separate_signal_from_padding(x, padding_indices, signal_indices):
     return signal_norm_split, padding_split, padding, signal
 
 
-def interleave(signal_norm_split, padding_split):
+def interleave(signal_norm_split, padding_split,batch_size, time_steps):
     rows = []
     for i in range(0, len(padding_split)):
-        row = torch.stack([padding_split[i].view(3, 1), signal_norm_split[i].view(3, 1)], dim=1)
+        row = torch.stack([padding_split[i].contiguous().view(time_steps, 1), signal_norm_split[i].contiguous().view(time_steps, 1)], dim=1)
 
         rows += [row]
     # rows
     # print("stacked: {} ".format(torch.stack(rows, dim=1)))
-    interleaved = torch.stack(rows, dim=0).view(6, 2)
+    interleaved = torch.stack(rows, dim=0).view(batch_size*time_steps, 2)
     return interleaved
 
 
 def calculate_softmax_padding_weights(interleaved):
     weights = F.softmax(interleaved, dim=1).narrow(dimension=1, start=0, length=1)
-    weights
     one_minus_weights = 1.0 - weights
     return weights, one_minus_weights
 
@@ -42,27 +41,50 @@ class PaddingBottleneck(torch.nn.Module):
     def __init__(self):
         super(PaddingBottleneck, self).__init__()
         self.padding_indices = Variable(torch.LongTensor([0]), requires_grad=True)
+
         self.signal_indices = None
         self.padding_amount=Parameter(torch.Tensor([0.0]))
         self.padding_amount.fill_(0.0)
 
-    def forward(self, x):
+        self.padding = None
 
-        if self.signal_indices is None:
-            self.signal_indices = Variable(torch.LongTensor(range(1, x.size(2) + 1)), requires_grad=True)
+    def forward(self, x):
         batch_size = x.size(0)
         encoding_dimension = x.size(1)
         time_steps = x.size(2)
-        num_softmax_elements = time_steps * batch_size
+        if self.signal_indices is None:
+            self.signal_indices = Variable(torch.LongTensor(range(1, encoding_dimension)), requires_grad=True)
+            if x.is_cuda:
+                self.signal_indices=self.signal_indices.cuda()
+                self.padding_indices=self.padding_indices.cuda()
+
         signal_norm_split, padding_split, \
         padding, signal = separate_signal_from_padding(x,
                                                        self.padding_indices,
                                                        self.signal_indices)
+        self.padding = padding
         # the padding_amount parameter makes it possible to increase, but not decrease the amount of padding.
-        padding=padding*(1.0+torch.abs(self.padding_amount))
-        interleaved = interleave(signal_norm_split, padding_split)
+        padding = padding * (1.0 + torch.abs(self.padding_amount))
+        interleaved = interleave(signal_norm_split, padding_split, batch_size=batch_size, time_steps=time_steps)
         weights, one_minus_weights = calculate_softmax_padding_weights(interleaved)
-        padding_weighted = (weights * padding.view(num_softmax_elements, -1)).view(batch_size, 1, time_steps)
-        signal_weighted = (one_minus_weights * signal.view(num_softmax_elements, -1)).view(batch_size, -1, time_steps)
+        signal_weighted = one_minus_weights.view(batch_size,1,time_steps).repeat(1,encoding_dimension-1,1)*signal
+        result= torch.cat([padding, signal_weighted], dim=1)
+        return result
 
-        return torch.cat([padding_weighted, signal_weighted], dim=1)
+
+# k1=torch.ones(4,5)
+#
+#
+# k1[0]=(torch.Tensor([-10,-5,-1,-0.5,0]))
+# k2=k1.clone()
+#
+# k2[0]=(torch.Tensor([1,5,10,20,30]))
+# k2[1]=torch.ones(1,5)*2
+# k2[2]=torch.ones(1,5)*2
+# k2[3]=torch.ones(1,5)*2
+# k=torch.stack([k1,k2])
+# print(k)
+#
+# padder=PaddingBottleneck()
+# v=Variable(k,requires_grad=False)
+# print(padder( v))

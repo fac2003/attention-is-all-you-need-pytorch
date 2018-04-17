@@ -47,6 +47,7 @@ class PaddingBottleneck(torch.nn.Module):
         self.padding = None
 
     def forward(self, x):
+        x=x.view(x.size(0),x.size(2),x.size(1))
         batch_size = x.size(0)
         encoding_dimension = x.size(1)
         time_steps = x.size(2)
@@ -67,7 +68,7 @@ class PaddingBottleneck(torch.nn.Module):
         weights, one_minus_weights = calculate_softmax_padding_weights(interleaved)
         signal_weighted = one_minus_weights.view(batch_size,1,time_steps).repeat(1,encoding_dimension-1,1)*signal
         result= torch.cat([padding, signal_weighted], dim=1)
-        return result
+        return result.view(result.size(0),result.size(2),result.size(1))
 
 
 # k1=torch.ones(4,5)

@@ -43,17 +43,15 @@ class PaddingBottleneck(torch.nn.Module):
         self.padding_indices = Variable(torch.LongTensor([0]), requires_grad=True)
 
         self.signal_indices = None
-        self.padding_amount=Parameter(torch.Tensor([0.0]))
-        self.padding_amount.fill_(0.0)
+        self.padding_amount=Parameter(torch.Tensor([0.0]))       
         self.padding = None
 
     def forward(self, x):
         batch_size = x.size(0)
         encoding_dimension = x.size(1)
         time_steps = x.size(2)
-        if self.signal_indices is None:
-            self.signal_indices = Variable(torch.LongTensor(range(1, encoding_dimension)), requires_grad=True)
-            if x.is_cuda:
+        self.signal_indices = Variable(torch.LongTensor(range(1, encoding_dimension)), requires_grad=True)
+        if x.is_cuda:
                 self.signal_indices=self.signal_indices.cuda()
                 self.padding_indices=self.padding_indices.cuda()
 

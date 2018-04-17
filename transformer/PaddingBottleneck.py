@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
+from torch.nn import Parameter
 
 
 def separate_signal_from_padding(x, padding_indices, signal_indices):
@@ -42,8 +43,11 @@ class PaddingBottleneck(torch.nn.Module):
         super(PaddingBottleneck, self).__init__()
         self.padding_indices = Variable(torch.LongTensor([0]), requires_grad=True)
         self.signal_indices = None
+        self.padding_amount=Parameter(torch.Tensor([0.0]))
+        self.padding_amount.fill_(0.0)
 
     def forward(self, x):
+
         if self.signal_indices is None:
             self.signal_indices = Variable(torch.LongTensor(range(1, x.size(2) + 1)), requires_grad=True)
         batch_size = x.size(0)
@@ -54,7 +58,8 @@ class PaddingBottleneck(torch.nn.Module):
         padding, signal = separate_signal_from_padding(x,
                                                        self.padding_indices,
                                                        self.signal_indices)
-
+        # the padding_amount parameter makes it possible to increase, but not decrease the amount of padding.
+        padding=padding*(1.0+torch.abs(self.padding_amount))
         interleaved = interleave(signal_norm_split, padding_split)
         weights, one_minus_weights = calculate_softmax_padding_weights(interleaved)
         padding_weighted = (weights * padding.view(num_softmax_elements, -1)).view(batch_size, 1, time_steps)

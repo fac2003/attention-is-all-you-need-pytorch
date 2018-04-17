@@ -50,6 +50,7 @@ def train_epoch(model, training_data, crit, optimizer, opt):
     n_total_correct = 0
     average_padding_amount=0
     num_sequences=0
+    average_padding_factor=0
     padding_indices = Variable(torch.LongTensor([Constants.PAD]),requires_grad=False)
     signal_indices = torch.LongTensor(range(1, opt.d_model))
     if opt.cuda:
@@ -69,7 +70,7 @@ def train_epoch(model, training_data, crit, optimizer, opt):
         # put source in gold:
 
         (pred, encoded_output) = model(src, target)
-
+        average_padding_factor += model.padding_amount.data[0]
         # backward
 
         loss, n_correct = get_performance(crit, pred, target[0])
@@ -78,7 +79,7 @@ def train_epoch(model, training_data, crit, optimizer, opt):
         padding_l1_sum=torch.sum(model.padding/time_steps/batch_size)
         #average_padding_amount+=padding_l1_sum.data[0]
         # encourage the encoding with lots of padding (minimize sequence length):
-        loss=loss-padding_l1_sum
+        loss=loss-model.padding_amount
         loss.backward()
 
         # update parameters
@@ -92,7 +93,7 @@ def train_epoch(model, training_data, crit, optimizer, opt):
         total_loss += loss.data[0]
         num_sequences+=1
 
-    return total_loss/n_total_words, n_total_correct/n_total_words, average_padding_amount/num_sequences
+    return total_loss/n_total_words, n_total_correct/n_total_words, average_padding_amount/num_sequences, average_padding_factor/num_sequences
 
 
 def eval_epoch(model, validation_data, crit):
@@ -103,8 +104,10 @@ def eval_epoch(model, validation_data, crit):
     total_loss = 0
     n_total_words = 0
     n_total_correct = 0
+    average_padding_factor=0
     padding_min_logit=sys.maxsize
     padding_max_logit=-sys.maxsize
+    num_batches=0
     for batch in tqdm(
             validation_data, mininterval=2,
             desc='  - (Validation) ', leave=False):
@@ -118,14 +121,15 @@ def eval_epoch(model, validation_data, crit):
         loss, n_correct =  get_performance(crit, pred, target[0])
         padding_min_logit = min(torch.min(model.padding.data[0]),padding_min_logit)
         padding_max_logit = max(torch.max(model.padding.data[0]),padding_max_logit)
-
+        average_padding_factor+=model.padding_amount.data[0]
         # note keeping
         n_words = src[0].data.ne(Constants.PAD).sum()
         n_total_words += n_words
         n_total_correct += n_correct
         total_loss += loss.data[0]
+        num_batches+=1
 
-    return total_loss/n_total_words, n_total_correct/n_total_words, padding_min_logit, padding_max_logit
+    return total_loss/n_total_words, n_total_correct/n_total_words, padding_min_logit, padding_max_logit,average_padding_factor/num_batches
 
 def train(model, training_data, validation_data, crit, optimizer, opt):
     ''' Start training '''
@@ -149,20 +153,21 @@ def train(model, training_data, validation_data, crit, optimizer, opt):
         print('[ Epoch', epoch_i, ']')
 
         start = time.time()
-        train_loss, train_accu,average_padding_amount = train_epoch(model, training_data, crit, optimizer,opt)
+        train_loss, train_accu,average_padding_amount, average_padding_factor = train_epoch(model, training_data, crit, optimizer,opt)
         end_training=time.time()
 
         start = time.time()
-        valid_loss, valid_accu, padding_min, padding_max= eval_epoch(model, validation_data, crit)
+        valid_loss, valid_accu, padding_min, padding_max,average_padding_factor= eval_epoch(model, validation_data, crit)
         end_validation=time.time()
-        print('\n  - (Training)   ppl: {ppl: 8.5f}, accuracy: {accu:3.3f} %, padding: {padding_amount:3.3f} '\
+        print('\n  - (Training)   ppl: {ppl: 8.5f}, accuracy: {accu:3.3f} %, padding: {padding_amount:3.3f} \
+        padding factor: {padding_factor:3.3e} '\
               'elapsed: {elapse:3.3f} min'.format(
-                  ppl=math.exp(min(train_loss, 100)), accu=100*train_accu,padding_amount=average_padding_amount,
+                  ppl=math.exp(min(train_loss, 100)), accu=100*train_accu,padding_amount=average_padding_amount,padding_factor=average_padding_factor,
                   elapse=(end_training-start)/60))
         print('\n  - (Validation) ppl: {ppl: 8.5f}, accuracy: {accu:3.3f} %, padding min: {padding_min:3.2f} max: {padding_max:3.2f}'\
-                ' elapsed: {elapse:3.3f} min'.format(
+                ' padding factor: {padding_factor:3.3e} elapsed: {elapse:3.3f} min'.format(
                     ppl=math.exp(min(valid_loss, 100)), accu=100*valid_accu,
-            padding_min=padding_min, padding_max=padding_max,
+            padding_min=padding_min, padding_max=padding_max,padding_factor=average_padding_factor,
                     elapse=(end_validation-start)/60))
 
         valid_accus += [valid_accu]
@@ -198,7 +203,7 @@ def main():
 
     parser.add_argument('-data', required=True)
 
-    parser.add_argument('-epoch', type=int, default=100)
+    parser.add_argument('-epoch', type=int, default=10000)
     parser.add_argument('-batch_size', type=int, default=64)
 
     #parser.add_argument('-d_word_vec', type=int, default=512)

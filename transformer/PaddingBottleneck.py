@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
+from torch.nn import Parameter
 
 
 def separate_signal_from_padding(x, padding_indices, signal_indices):
@@ -42,7 +43,8 @@ class PaddingBottleneck(torch.nn.Module):
         self.padding_indices = Variable(torch.LongTensor([0]), requires_grad=True)
 
         self.signal_indices = None
-        self.padding=None
+        self.padding_amount=Parameter(torch.Tensor([0.0]))
+        self.padding = None
 
     def forward(self, x):
         batch_size = x.size(0)
@@ -50,21 +52,24 @@ class PaddingBottleneck(torch.nn.Module):
         time_steps = x.size(2)
         self.signal_indices = Variable(torch.LongTensor(range(1, encoding_dimension)), requires_grad=True)
         if x.is_cuda:
-            self.signal_indices = self.signal_indices.cuda()
-            self.padding_indices = self.padding_indices.cuda()
+                self.signal_indices=self.signal_indices.cuda()
+                self.padding_indices=self.padding_indices.cuda()
 
         signal_norm_split, padding_split, \
         padding, signal = separate_signal_from_padding(x,
                                                        self.padding_indices,
                                                        self.signal_indices)
-        self.padding=padding
-        interleaved = interleave(signal_norm_split, padding_split,batch_size=batch_size,time_steps=time_steps)
+
+        # the padding_amount parameter makes it possible to increase, but not decrease the amount of padding.
+        padding = padding * (1.0 + torch.abs(self.padding_amount))
+        self.padding = padding
+        interleaved = interleave(signal_norm_split, padding_split, batch_size=batch_size, time_steps=time_steps)
         weights, one_minus_weights = calculate_softmax_padding_weights(interleaved)
         signal_weighted = one_minus_weights.view(batch_size,1,time_steps).repeat(1,encoding_dimension-1,1)*signal
         result= torch.cat([padding, signal_weighted], dim=1)
         return result
 
-#
+
 # k1=torch.ones(4,5)
 #
 #

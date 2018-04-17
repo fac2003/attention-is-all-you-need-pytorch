@@ -45,7 +45,6 @@ class PaddingBottleneck(torch.nn.Module):
         self.signal_indices = None
         self.padding_amount=Parameter(torch.Tensor([0.0]))
         self.padding_amount.fill_(0.0)
-
         self.padding = None
 
     def forward(self, x):
@@ -62,9 +61,10 @@ class PaddingBottleneck(torch.nn.Module):
         padding, signal = separate_signal_from_padding(x,
                                                        self.padding_indices,
                                                        self.signal_indices)
-        self.padding = padding
+
         # the padding_amount parameter makes it possible to increase, but not decrease the amount of padding.
         padding = padding * (1.0 + torch.abs(self.padding_amount))
+        self.padding = padding
         interleaved = interleave(signal_norm_split, padding_split, batch_size=batch_size, time_steps=time_steps)
         weights, one_minus_weights = calculate_softmax_padding_weights(interleaved)
         signal_weighted = one_minus_weights.view(batch_size,1,time_steps).repeat(1,encoding_dimension-1,1)*signal

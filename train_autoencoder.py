@@ -76,7 +76,7 @@ def train_epoch(model, training_data, crit, optimizer, opt):
         loss, n_correct = get_performance(crit, pred, target[0])
 
         # encourage the encoding with lots of padding (minimize sequence length):
-        loss=loss-model.padding_amount
+        loss=loss-model.padding_amount*opt.sparsity
         loss.backward()
 
         # update parameters
@@ -93,7 +93,7 @@ def train_epoch(model, training_data, crit, optimizer, opt):
     return total_loss/n_total_words, n_total_correct/n_total_words, average_padding_amount/num_sequences, average_padding_factor/num_sequences
 
 
-def eval_epoch(model, validation_data, crit):
+def eval_epoch(model, validation_data, crit,opt):
     ''' Epoch operation in evaluation phase '''
 
     model.eval()
@@ -154,7 +154,7 @@ def train(model, training_data, validation_data, crit, optimizer, opt):
         end_training=time.time()
 
         start = time.time()
-        valid_loss, valid_accu, padding_min, padding_max,average_padding_factor= eval_epoch(model, validation_data, crit)
+        valid_loss, valid_accu, padding_min, padding_max,average_padding_factor= eval_epoch(model, validation_data, crit,opt)
         end_validation=time.time()
         print('\n  - (Training)   ppl: {ppl: 8.5f}, accuracy: {accu:3.3f} %, padding: {padding_amount:3.3f} \
         padding factor: {padding_factor:3.3e} '\
@@ -215,6 +215,7 @@ def main():
     parser.add_argument('-n_warmup_steps', type=int, default=4000)
 
     parser.add_argument('-dropout', type=float, default=0.1)
+    parser.add_argument('-sparsity', type=float, default=5.0)
     parser.add_argument('-embs_share_weight', action='store_true')
     parser.add_argument('-proj_share_weight', action='store_true')
 

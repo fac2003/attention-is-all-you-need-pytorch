@@ -162,7 +162,7 @@ class Transformer(nn.Module):
         self.padding_bottleneck=PaddingBottleneck()
         # We will store the padding tensor here to find it after a call to forward:
         self.padding=None
-        self.padding_amount=0
+        self.padding_amount=self.padding_bottleneck.padding_amount
         assert d_model == d_word_vec, \
         'To facilitate the residual connections, \
          the dimensions of all module output shall be the same.'
@@ -196,7 +196,7 @@ class Transformer(nn.Module):
         enc_output, *_ = self.encoder(src_seq, src_pos)
         enc_output=self.padding_bottleneck(enc_output)
         self.padding=self.padding_bottleneck.padding
-        self.padding_amount=self.padding_bottleneck.padding_amount
+        # TODO in next line, should src_seq not be src_pos, since only used to compare with PADDING token?
         dec_output, *_ = self.decoder(tgt_seq, tgt_pos, src_seq, enc_output)
         seq_logit = self.tgt_word_proj(dec_output)
         #max, max_token=torch.max(seq_logit,dim=2)

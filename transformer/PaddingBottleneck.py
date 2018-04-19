@@ -110,7 +110,9 @@ class HardCompressiveBottleneck(torch.nn.Module):
                     example_lengths[example_index]+=1
 
         clipped_length=max(example_lengths)
+        self.compression_ratio=clipped_length/time_steps
         result=torch.zeros(batch_size, clipped_length,encoding_dimension)
+
         position = [0] * batch_size
         result[:, :, 0] = self.threshold
         for example_index in range(0,batch_size):

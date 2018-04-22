@@ -152,12 +152,12 @@ def train(model, training_data, validation_data, crit, optimizer, opt):
     for epoch_i in range(opt.epoch):
         print('[ Epoch', epoch_i, ']')
 
-        start = time.time()
+        start_training = time.time()
         train_loss, train_accu, average_padding_amount, average_padding_factor = train_epoch(model, training_data, crit,
                                                                                              optimizer, opt)
         end_training = time.time()
 
-        start = time.time()
+        start_validation = time.time()
         valid_loss, valid_accu, padding_min, padding_max, average_padding_factor = eval_epoch(model, validation_data,
                                                                                               crit, opt)
         end_validation = time.time()
@@ -166,13 +166,13 @@ def train(model, training_data, validation_data, crit, optimizer, opt):
               'elapsed: {elapse:3.3f} min'.format(
             ppl=math.exp(min(train_loss, 100)), accu=100 * train_accu, padding_amount=average_padding_amount,
             padding_factor=average_padding_factor,
-            elapse=(end_training - start) / 60))
+            elapse=(end_training - start_training) / 60))
         print(
             '\n  - (Validation) ppl: {ppl: 8.5f}, accuracy: {accu:3.3f} %, padding min: {padding_min:3.2f} max: {padding_max:3.2f}' \
             ' padding factor: {padding_factor:3.3e} elapsed: {elapse:3.3f} min'.format(
                 ppl=math.exp(min(valid_loss, 100)), accu=100 * valid_accu,
                 padding_min=padding_min, padding_max=padding_max, padding_factor=average_padding_factor,
-                elapse=(end_validation - start) / 60))
+                elapse=(end_validation - start_validation) / 60))
 
         valid_accus += [valid_accu]
 
@@ -222,6 +222,7 @@ def main():
     parser.add_argument('-max_size', type=int, default=0)
     parser.add_argument('-n_warmup_steps', type=int, default=4000)
 
+    parser.add_argument('-lr', type=float, default=1E-3, help="Learning rate.")
     parser.add_argument('-dropout', type=float, default=0.1)
     parser.add_argument('-sparsity', type=float, default=5.0)
     parser.add_argument('-embs_share_weight', action='store_true')
@@ -307,7 +308,7 @@ def main():
     optimizer = ScheduledOptim(
         optim.Adam(
             transformer.get_trainable_parameters(),
-            betas=(0.9, 0.98), eps=1e-09),
+            betas=(0.9, 0.98), eps=1e-09, lr=opt.lr),
         opt.d_model, opt.n_warmup_steps)
 
     def get_criterion(vocab_size):

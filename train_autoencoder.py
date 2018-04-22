@@ -303,7 +303,7 @@ def main():
         n_head=opt.n_head,
         dropout=opt.dropout)
 
-    print(transformer)
+    #print(transformer)
 
     optimizer = ScheduledOptim(
         optim.Adam(

@@ -156,16 +156,36 @@ class SkippingProbability(nn.Module):
 class LayerManager():
     def get_input_dim(self,layer_index):
         return 0
+    def get_hidden_dim(self,layer_index):
+        return max(self.get_output_dim(layer_index),self.get_input_dim(layer_index))*2
     def get_output_dim(self,layer_index):
         return 0
 
-class ConstantDimLayerManager():
+class ConstantDimLayerManager(LayerManager):
     def __init__(self,constant_dimension):
         self.constant_dimension=constant_dimension
     def get_input_dim(self,layer_index):
         return self.constant_dimension
     def get_output_dim(self,layer_index):
         return self.constant_dimension
+
+class DoubleEachLayerManager(ConstantDimLayerManager):
+    def __init__(self,constant_dimension, increase_factor=2):
+        self.constant_dimension=constant_dimension
+        self.increase_factor=increase_factor
+
+    def get_input_dim(self,layer_index):
+        if layer_index==0:
+            return self.constant_dimension
+        else:
+            return self.get_output_dim(layer_index-1)
+
+
+    def get_output_dim(self,layer_index):
+        #assert layer_index>=0, "layer index must be positive."
+        if layer_index<0:
+            return self.constant_dimension
+        return int(self.increase_factor*self.get_input_dim(layer_index))
 
 
 class PositionwiseFeedForwardFunnel(nn.Module):
@@ -177,6 +197,8 @@ class PositionwiseFeedForwardFunnel(nn.Module):
         self.w_2 = nn.Linear(d_inner_hid, d_output) # position-wise
         self.layer_norm = LayerNormalization(d_output)
         self.dropout = nn.Dropout(dropout)
+        self.d_output=d_output
+        self.d_input=d_input
         self.relu = nn.ReLU()
 
     def forward(self, x):
@@ -187,8 +209,8 @@ class PositionwiseFeedForwardFunnel(nn.Module):
         output = self.relu(self.w_1(x.view(-1,encoding_dim)))
         output = self.w_2(output)
         output = self.dropout(output)
-        output=output.view(batch_size,time_steps,encoding_dim)
-        return self.layer_norm(output + residual)
+        output=output.view(batch_size,time_steps,self.d_output)
+        return self.layer_norm(output + residual.repeat(1,1,int(self.d_output/self.d_input)))
 
 
 class FunnelEncoderLayer(nn.Module):
@@ -199,12 +221,18 @@ class FunnelEncoderLayer(nn.Module):
         assert layer_manager is None or layer_index!=-1, "layer index must be defined"
         if layer_manager is None:
             layer_manager=ConstantDimLayerManager(d_model)
+        d_model = layer_manager.get_input_dim(layer_index=layer_index)
+        d_out = layer_manager.get_output_dim(layer_index=layer_index)
+        print("encoder, layer_index={} d_model: {} d_out: {}".format(layer_index, d_model,d_out))
+
         self.slf_attn = MultiHeadAttention(
             n_head, d_model, d_k, d_v, dropout=dropout)
-        self.pos_ffn = PositionwiseFeedForwardFunnel(layer_manager.get_input_dim(layer_index=layer_index),
-                                                     layer_manager.get_output_dim(layer_index=layer_index),
-                                                     d_inner_hid, dropout=dropout)
-        self.prob_estimator=SkippingProbability(d_model)
+
+
+        self.pos_ffn = PositionwiseFeedForwardFunnel(d_model,
+                                                     d_out,
+                                                     layer_manager.get_hidden_dim(layer_index=layer_index), dropout=dropout)
+        self.prob_estimator=SkippingProbability(encoding_dim=d_model)
         self.skipper=ProbabilisticSkipper()
 
     def forward(self, enc_input, slf_attn_mask=None):
@@ -235,9 +263,11 @@ class Encoder(nn.Module):
         self.position_enc.weight.data = position_encoding_init(n_position, d_word_vec)
 
         self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=Constants.PAD)
-
+        layer_manager = ConstantDimLayerManager(d_model) if True else DoubleEachLayerManager(constant_dimension=d_model,
+                                                                                             increase_factor=2)
         self.layer_stack = nn.ModuleList([
-            FunnelEncoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout, layer_index=layer_index)
+            FunnelEncoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout, layer_index=layer_index,
+                               layer_manager=layer_manager)
                 for layer_index in range(n_layers)])
 
     def forward(self, src_seq, src_pos, return_attns=False):
@@ -266,6 +296,38 @@ class Encoder(nn.Module):
         else:
             return enc_output,
 
+class FunnelDecoderLayer(nn.Module):
+    ''' Compose with three layers '''
+
+    def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1,layer_index=-1,
+                 layer_manager=None):
+        super(FunnelDecoderLayer, self).__init__()
+        if layer_manager is None:
+            layer_manager=ConstantDimLayerManager(constant_dimension=d_model)
+        first_level_encoding_dim=d_model
+        d_model=layer_manager.get_output_dim(layer_index)
+        self.layer_index=layer_index
+        self.d_model=d_model
+        d_out=layer_manager.get_input_dim(layer_index)
+        print("decoder, layer_index={} d_model: {} d_out: {}".format(layer_index, d_model,d_out))
+        # self attention works on initial-level encodings
+        self.slf_attn = MultiHeadAttention(n_head, first_level_encoding_dim, d_k, d_v, dropout=dropout)
+        self.enc_attn = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
+        self.pos_ffn = PositionwiseFeedForwardFunnel(d_input=d_model,
+                                                     d_output=d_out,
+                                                     d_inner_hid=layer_manager.get_hidden_dim(layer_index),
+                                                     dropout=dropout)
+
+    def forward(self, dec_input, enc_output, slf_attn_mask=None, dec_enc_attn_mask=None):
+        dec_output, dec_slf_attn = self.slf_attn(
+            dec_input, dec_input, dec_input, attn_mask=slf_attn_mask)
+        #TODO convert encoder output encoding dimensionality (e.g., 64 to decoder self-attention encoding-dim e.g., 8).
+        dec_output, dec_enc_attn = self.enc_attn(
+            dec_output, enc_output, enc_output, attn_mask=dec_enc_attn_mask)
+        dec_output = self.pos_ffn(dec_output)
+
+        return dec_output, dec_slf_attn, dec_enc_attn
+
 class Decoder(nn.Module):
     ''' A decoder model with self attention mechanism. '''
     def __init__(
@@ -284,10 +346,10 @@ class Decoder(nn.Module):
         self.tgt_word_emb = nn.Embedding(
             n_tgt_vocab, d_word_vec, padding_idx=Constants.PAD)
         self.dropout = nn.Dropout(dropout)
-
+        layer_manager=ConstantDimLayerManager(d_model) if True else DoubleEachLayerManager(constant_dimension=d_model,increase_factor=2)
         self.layer_stack = nn.ModuleList([
-            DecoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout)
-            for _ in range(n_layers)])
+            FunnelDecoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout, layer_index=(layer_index),layer_manager=layer_manager)
+            for layer_index in list(range(n_layers-1,-1,-1))])
 
     def forward(self, tgt_seq, tgt_pos, src_seq, enc_output, return_attns=False):
         # Word embedding look up

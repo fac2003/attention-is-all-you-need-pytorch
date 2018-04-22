@@ -72,15 +72,19 @@ class PositionwiseFeedForward(nn.Module):
 
     def __init__(self, d_hid, d_inner_hid, dropout=0.1):
         super(PositionwiseFeedForward, self).__init__()
-        self.w_1 = nn.Conv1d(d_hid, d_inner_hid, 1) # position-wise
-        self.w_2 = nn.Conv1d(d_inner_hid, d_hid, 1) # position-wise
+        self.w_1 = nn.Linear(d_hid, d_inner_hid) # position-wise
+        self.w_2 = nn.Linear(d_inner_hid, d_hid) # position-wise
         self.layer_norm = LayerNormalization(d_hid)
         self.dropout = nn.Dropout(dropout)
         self.relu = nn.ReLU()
 
     def forward(self, x):
         residual = x
-        output = self.relu(self.w_1(x.transpose(1, 2)))
-        output = self.w_2(output).transpose(2, 1)
+        batch_size=x.size(0)
+        time_steps=x.size(1)
+        encoding_dim=x.size(2)
+        output = self.relu(self.w_1(x.view(-1,encoding_dim)))
+        output = self.w_2(output)
         output = self.dropout(output)
+        output=output.view(batch_size,time_steps,encoding_dim)
         return self.layer_norm(output + residual)

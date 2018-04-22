@@ -72,13 +72,15 @@ class ProbabilisticSkipper(nn.Module):
         reduced_seqs = []
         max_length = 0
         for index, seq in enumerate(list_of_example_sequences):
-            index_of_kept_timesteps = keeping_timesteps[index].squeeze().nonzero().squeeze()
-            selected_time_steps = seq.index_select(dim=1, index=index_of_kept_timesteps)
-            # selected_time_steps has dimension: 1 x seq_length x encoding_dim
-            reduced_seqs += [selected_time_steps]
-            #print(selected_time_steps)
-            max_length = max(max_length, selected_time_steps.size(1))
-
+            try:
+                index_of_kept_timesteps = keeping_timesteps[index].squeeze().nonzero().squeeze()
+                selected_time_steps = seq.index_select(dim=1, index=index_of_kept_timesteps)
+                # selected_time_steps has dimension: 1 x seq_length x encoding_dim
+                reduced_seqs += [selected_time_steps]
+                #print(selected_time_steps)
+                max_length = max(max_length, selected_time_steps.size(1))
+            except RuntimeError as e:
+                print(e)
             # reduced_seqs
         max_length, [seq[0].size() for seq in reduced_seqs]
         padded = []
@@ -295,15 +297,15 @@ class Decoder(nn.Module):
         dec_slf_attn_pad_mask = get_attn_padding_mask(tgt_seq, tgt_seq)
         dec_slf_attn_sub_mask = get_attn_subsequent_mask(tgt_seq)
         dec_slf_attn_mask = torch.gt(dec_slf_attn_pad_mask + dec_slf_attn_sub_mask, 0)
-
-        dec_enc_attn_pad_mask = get_attn_padding_mask(tgt_seq, src_seq)
+        # use encoded sequence to determine length of source:
+        dec_enc_attn_pad_mask = get_attn_padding_mask(tgt_seq, enc_output)
 
         if return_attns:
             dec_slf_attns, dec_enc_attns = [], []
 
         dec_output = dec_input
         for dec_layer in self.layer_stack:
-            print("dec_output.size: {}".format(dec_output.size()))
+            #print("dec_output.size: {}".format(dec_output.size()))
             dec_output, dec_slf_attn, dec_enc_attn = dec_layer(
                 dec_output, enc_output,
                 slf_attn_mask=dec_slf_attn_mask,

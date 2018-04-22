@@ -71,7 +71,8 @@ def train_epoch(model, training_data, crit, optimizer, opt):
         # put source in gold:
 
         (pred, encoded_output) = model(src, target)
-        average_padding_factor += model.padding_amount.data[0]
+        if hasattr(model.padding_amount,"data"):
+            average_padding_factor += model.padding_amount.data[0]
         # backward
 
         loss, n_correct = get_performance(crit, pred, target[0])
@@ -116,9 +117,10 @@ def eval_epoch(model, validation_data, crit, opt):
         # forward
         (pred, encoded_output) = model(src, target)
         loss, n_correct = get_performance(crit, pred, target[0])
-        padding_min_logit = min(torch.min(model.padding.data[0]), padding_min_logit)
-        padding_max_logit = max(torch.max(model.padding.data[0]), padding_max_logit)
-        average_padding_factor += model.padding_amount.data[0]
+        if hasattr(model.padding_amount,"data"):
+            padding_min_logit = min(torch.min(model.padding.data[0]), padding_min_logit)
+            padding_max_logit = max(torch.max(model.padding.data[0]), padding_max_logit)
+            average_padding_factor += model.padding_amount.data[0]
         # note keeping
         n_words = src[0].data.ne(Constants.PAD).sum()
         n_total_words += n_words

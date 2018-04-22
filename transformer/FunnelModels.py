@@ -64,6 +64,9 @@ class ProbabilisticSkipper(nn.Module):
         encoding_dim = x.size(2)
 
         noise = torch.Tensor()
+        if x.is_cuda:
+            noise=noise.cuda()
+
         noise.resize_as_(skipping_probs.data)
         noise.bernoulli_(skipping_probs.data)
         # following variable contains 1 in timestepts that will be kept, 0 otherwise:

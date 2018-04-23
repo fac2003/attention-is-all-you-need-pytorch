@@ -255,9 +255,11 @@ def main():
     data = torch.load(opt.data)
     opt.max_token_seq_len = data['settings'].max_token_seq_len
 
+
     # ========= Preparing DataLoader =========#
     max_size_src = opt.max_size if opt.max_size is not 0 else len(data['train']['src'])
     max_size_tgt = opt.max_size if opt.max_size is not 0 else len(data['train']['tgt'])
+    print("training: max_size_src={} max_size_tgt={}".format(max_size_src,max_size_tgt))
     training_data = DataLoader(
         data['dict']['src'],
         data['dict']['tgt'],
@@ -267,6 +269,7 @@ def main():
         cuda=opt.cuda)
     max_size_src = opt.max_size if opt.max_size is not 0 else len(data['valid']['src'])
     max_size_tgt = opt.max_size if opt.max_size is not 0 else len(data['valid']['tgt'])
+    print("validation: max_size_src={} max_size_tgt={}".format(max_size_src, max_size_tgt))
     validation_data = DataLoader(
         data['dict']['src'],
         data['dict']['tgt'],
@@ -302,11 +305,11 @@ def main():
         n_head=opt.n_head,
         dropout=opt.dropout)
 
-    print(transformer)
+    #print(transformer)
 
     optimizer = ScheduledOptim(
         optim.Adam(
-            transformer.get_trainable_parameters(),
+            transformer.parameters(),
             betas=(0.9, 0.98), eps=1e-09),
         opt.d_model, opt.n_warmup_steps)
 

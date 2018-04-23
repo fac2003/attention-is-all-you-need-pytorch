@@ -107,7 +107,7 @@ class Decoder(nn.Module):
             DecoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout)
             for _ in range(n_layers)])
 
-    def forward(self, tgt_seq, tgt_pos, src_seq, enc_output, return_attns=False):
+    def forward(self, tgt_seq, tgt_pos, src_pos, enc_output, return_attns=False):
         # Word embedding look up
         dec_input = self.tgt_word_emb(tgt_seq)
 
@@ -119,7 +119,7 @@ class Decoder(nn.Module):
         dec_slf_attn_sub_mask = get_attn_subsequent_mask(tgt_seq)
         dec_slf_attn_mask = torch.gt(dec_slf_attn_pad_mask + dec_slf_attn_sub_mask, 0)
 
-        dec_enc_attn_pad_mask = get_attn_padding_mask(tgt_seq, src_seq)
+        dec_enc_attn_pad_mask = get_attn_padding_mask(tgt_seq, src_pos)
 
         if return_attns:
             dec_slf_attns, dec_enc_attns = [], []
@@ -196,8 +196,7 @@ class Transformer(nn.Module):
         enc_output, *_ = self.encoder(src_seq, src_pos)
         enc_output=self.padding_bottleneck(enc_output)
         self.padding=self.padding_bottleneck.padding
-        # TODO in next line, should src_seq not be src_pos, since only used to compare with PADDING token?
-        dec_output, *_ = self.decoder(tgt_seq, tgt_pos, src_seq, enc_output)
+        dec_output, *_ = self.decoder(tgt_seq, tgt_pos, src_pos, enc_output)
         seq_logit = self.tgt_word_proj(dec_output)
         #max, max_token=torch.max(seq_logit,dim=2)
         #result= (max_token, enc_output)

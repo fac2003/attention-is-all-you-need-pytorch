@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import transformer.Constants as Constants
+from transformer.FunnelModels import FunnelTransformer
 from transformer.Models import Transformer
 from transformer.Optim import ScheduledOptim
 from DataLoader import DataLoader
@@ -40,6 +41,7 @@ def get_performance(crit, pred, gold, smoothing=False, num_class=None):
     n_correct = n_correct.masked_select(gold_reshaped.ne(Constants.PAD).data).sum()
 
     return loss, n_correct
+
 
 def train_epoch(model, training_data, crit, optimizer, opt):
     ''' Epoch operation in training phase'''
@@ -71,8 +73,8 @@ def train_epoch(model, training_data, crit, optimizer, opt):
         # put source in gold:
 
         (pred, encoded_output) = model(src, target)
-
-        average_padding_factor += model.padding_amount.data[0]
+        if hasattr(model.padding_amount,"data"):
+            average_padding_factor += model.padding_amount.data[0]
         # backward
 
         loss, n_correct = get_performance(crit, pred, target[0])
@@ -95,7 +97,7 @@ def train_epoch(model, training_data, crit, optimizer, opt):
     return total_loss / n_total_words, n_total_correct / n_total_words, average_padding_amount / num_sequences, average_padding_factor / num_sequences
 
 
-def eval_epoch(model, validation_data, crit, hard_compressor, opt):
+def eval_epoch(model, validation_data, crit, opt):
     ''' Epoch operation in evaluation phase '''
 
     model.eval()
@@ -106,10 +108,7 @@ def eval_epoch(model, validation_data, crit, hard_compressor, opt):
     average_padding_factor = 0
     padding_min_logit = sys.maxsize
     padding_max_logit = -sys.maxsize
-    sum_compression_ratios = 0
     num_batches = 0
-    hard_padder = HardCompressiveBottleneck(padding_amount=model.padding_amount,
-                                            padding_value_threshold=opt.padding_value_threshold)
     for batch in tqdm(
             validation_data, mininterval=2,
             desc='  - (Validation) ', leave=False):
@@ -119,13 +118,11 @@ def eval_epoch(model, validation_data, crit, hard_compressor, opt):
 
         # forward
         (pred, encoded_output) = model(src, target)
-        hard_padder(encoded_output)
-        sum_compression_ratios += hard_padder.compression_ratio
-        print("compression ratio: {}".format(hard_padder.compression_ratio))
         loss, n_correct = get_performance(crit, pred, target[0])
-        padding_min_logit = min(torch.min(model.padding.data[0]), padding_min_logit)
-        padding_max_logit = max(torch.max(model.padding.data[0]), padding_max_logit)
-        average_padding_factor += model.padding_amount.data[0]
+        if hasattr(model.padding_amount,"data"):
+            padding_min_logit = min(torch.min(model.padding.data[0]), padding_min_logit)
+            padding_max_logit = max(torch.max(model.padding.data[0]), padding_max_logit)
+            average_padding_factor += model.padding_amount.data[0]
         # note keeping
         n_words = src[0].data.ne(Constants.PAD).sum()
         n_total_words += n_words
@@ -133,15 +130,10 @@ def eval_epoch(model, validation_data, crit, hard_compressor, opt):
         total_loss += loss.data[0]
         num_batches += 1
 
-    return (total_loss / n_total_words,
-            n_total_correct / n_total_words,
-            padding_min_logit,
-            padding_max_logit,
-            average_padding_factor / num_batches,
-            sum_compression_ratios / num_batches)
+    return total_loss / n_total_words, n_total_correct / n_total_words, padding_min_logit, padding_max_logit, average_padding_factor / num_batches
 
 
-def train(model, training_data, validation_data, crit, optimizer,           opt):
+def train(model, training_data, validation_data, crit, optimizer, opt):
     ''' Start training '''
 
     log_train_file = None
@@ -163,29 +155,27 @@ def train(model, training_data, validation_data, crit, optimizer,           opt)
     for epoch_i in range(opt.epoch):
         print('[ Epoch', epoch_i, ']')
 
-        start = time.time()
+        start_training = time.time()
         train_loss, train_accu, average_padding_amount, average_padding_factor = train_epoch(model, training_data, crit,
-                                                                                             optimizer=optimizer,
-                                                                                             opt=opt)
+                                                                                             optimizer, opt)
         end_training = time.time()
 
-        start = time.time()
-        valid_loss, valid_accu, padding_min, padding_max, average_padding_factor, \
-        compression_ratio = eval_epoch(model, validation_data, crit, hard_compressor=hard_compressor,opt=opt)
+        start_validation = time.time()
+        valid_loss, valid_accu, padding_min, padding_max, average_padding_factor = eval_epoch(model, validation_data,
+                                                                                              crit, opt)
         end_validation = time.time()
         print('\n  - (Training)   ppl: {ppl: 8.5f}, accuracy: {accu:3.3f} %, padding: {padding_amount:3.3f} \
         padding factor: {padding_factor:3.3e} ' \
               'elapsed: {elapse:3.3f} min'.format(
             ppl=math.exp(min(train_loss, 100)), accu=100 * train_accu, padding_amount=average_padding_amount,
             padding_factor=average_padding_factor,
-            elapse=(end_training - start) / 60))
+            elapse=(end_training - start_training) / 60))
         print(
             '\n  - (Validation) ppl: {ppl: 8.5f}, accuracy: {accu:3.3f} %, padding min: {padding_min:3.2f} max: {padding_max:3.2f}' \
-            ' padding factor: {padding_factor:3.3e} avg compression ratio: {compression:3.1f}% elapsed: {elapse:3.3f} min'.format(
+            ' padding factor: {padding_factor:3.3e} elapsed: {elapse:3.3f} min'.format(
                 ppl=math.exp(min(valid_loss, 100)), accu=100 * valid_accu,
                 padding_min=padding_min, padding_max=padding_max, padding_factor=average_padding_factor,
-                compression=compression_ratio * 100.0,
-                elapse=(end_validation - start) / 60))
+                elapse=(end_validation - start_validation) / 60))
 
         valid_accus += [valid_accu]
 
@@ -235,6 +225,7 @@ def main():
     parser.add_argument('-max_size', type=int, default=0)
     parser.add_argument('-n_warmup_steps', type=int, default=4000)
 
+    parser.add_argument('-lr', type=float, default=1E-3, help="Learning rate.")
     parser.add_argument('-dropout', type=float, default=0.1)
     parser.add_argument('-sparsity', type=float, default=5.0)
     parser.add_argument('-padding_value_threshold', type=float, default=0.0)
@@ -246,6 +237,7 @@ def main():
     parser.add_argument('-save_mode', type=str, choices=['all', 'best'], default='best')
 
     parser.add_argument('-no_cuda', action='store_true')
+    parser.add_argument('-funnel', action='store_true', help="Use FunnelTransformer architecture.")
 
     opt = parser.parse_args()
     opt.cuda = not opt.no_cuda
@@ -303,6 +295,19 @@ def main():
         d_inner_hid=opt.d_inner_hid,
         n_layers=opt.n_layers,
         n_head=opt.n_head,
+        dropout=opt.dropout) if not opt.funnel else FunnelTransformer(
+        opt.src_vocab_size,
+        opt.tgt_vocab_size,
+        opt.max_token_seq_len,
+        proj_share_weight=opt.proj_share_weight,
+        embs_share_weight=opt.embs_share_weight,
+        d_k=opt.d_k,
+        d_v=opt.d_v,
+        d_model=opt.d_model,
+        d_word_vec=opt.d_word_vec,
+        d_inner_hid=opt.d_inner_hid,
+        n_layers=opt.n_layers,
+        n_head=opt.n_head,
         dropout=opt.dropout)
 
     #print(transformer)
@@ -310,9 +315,8 @@ def main():
     optimizer = ScheduledOptim(
         optim.Adam(
             transformer.parameters(),
-            betas=(0.9, 0.98), eps=1e-09),
+            betas=(0.9, 0.98), eps=1e-09, lr=opt.lr),
         opt.d_model, opt.n_warmup_steps)
-
 
 
     def get_criterion(vocab_size):

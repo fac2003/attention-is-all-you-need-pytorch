@@ -69,16 +69,19 @@ python preprocess.py -train_src data/multi30k/train.en.atok -train_tgt data/mult
 
 To preprocessing as characters to use with auto-encoder:
 ```bash
-python preprocess.py -characters -auto_encoder -max_len 1000 -min_word_count 1 -train_src data/multi30k/train.en.atok -train_tgt data/multi30k/train.de.atok -valid_src data/multi30k/val.en.atok -valid_tgt data/multi30k/val.de.atok -save_data data/multi30k.atok.low.char.pt
+python preprocess.py -characters -auto_encoder -max_len 1000 -min_word_count 1 \
+      -train_src data/multi30k/train.en -train_tgt data/multi30k/train.de \
+      -valid_src data/multi30k/val.en -valid_tgt data/multi30k/val.de \
+      -save_data data/multi30k.low.char.pt
 ```
 ### 2) Train the model
 ```bash
 python train.py -data data/multi30k.atok.low.pt -save_model trained -save_mode best -proj_share_weight 
 ```
 
-With characters:
+With characters (uses text before tokenization):
 ```bash
-python train.py -data data/multi30k.atok.low.char.pt -embs_share_weight -save_model trained -save_mode best -proj_share_weight
+python train.py -data data/multi30k.low.char.pt -embs_share_weight -save_model trained -save_mode best -proj_share_weight
 ```
 > If your source and target language share one common vocabulary, use the `-embs_share_weight` flag to enable the model to share source/target word embedding. 
 

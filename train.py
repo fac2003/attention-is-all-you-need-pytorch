@@ -90,7 +90,7 @@ def eval_epoch(model, validation_data, crit):
         gold = tgt[0][:, 1:]
 
         # forward
-        pred = model(src, tgt)
+        pred,_ = model(src, tgt)
         loss, n_correct = get_performance(crit, pred, gold)
 
         # note keeping

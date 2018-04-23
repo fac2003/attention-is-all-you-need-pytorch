@@ -42,7 +42,11 @@ def get_attn_padding_mask(seq_q, seq_k):
 
 def get_attn_subsequent_mask(seq):
     ''' Get an attention mask to avoid using the subsequent info.'''
-    assert seq.dim() == 2
+    #assert seq.dim() == 2
+    if seq.dim() == 3:
+        # reduce the sequence to the first encoding dimension, and eliminate this dimension
+        seq_q=seq[:,:,0].squeeze()
+        # then calculate the mask as before:
     attn_shape = (seq.size(0), seq.size(1), seq.size(1))
     subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
     subsequent_mask = torch.from_numpy(subsequent_mask)
@@ -300,10 +304,11 @@ class FunnelDecoderLayer(nn.Module):
     ''' Compose with three layers '''
 
     def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1,layer_index=-1,
-                 layer_manager=None):
+                 layer_manager=None, is_first_decoder_layer=False):
         super(FunnelDecoderLayer, self).__init__()
         if layer_manager is None:
             layer_manager=ConstantDimLayerManager(constant_dimension=d_model)
+        self.is_first_decoder_layer=is_first_decoder_layer
         first_level_encoding_dim=d_model
         d_model=layer_manager.get_output_dim(layer_index)
         self.layer_index=layer_index
@@ -318,12 +323,24 @@ class FunnelDecoderLayer(nn.Module):
                                                      d_inner_hid=layer_manager.get_hidden_dim(layer_index),
                                                      dropout=dropout)
 
-    def forward(self, dec_input, enc_output, slf_attn_mask=None, dec_enc_attn_mask=None):
-        dec_output, dec_slf_attn = self.slf_attn(
-            dec_input, dec_input, dec_input, attn_mask=slf_attn_mask)
-        #TODO convert encoder output encoding dimensionality (e.g., 64 to decoder self-attention encoding-dim e.g., 8).
-        dec_output, dec_enc_attn = self.enc_attn(
-            dec_output, enc_output, enc_output, attn_mask=dec_enc_attn_mask)
+    def forward(self, previous_dec_output, enc_output, slf_attn_mask=None, dec_enc_attn_mask=None):
+        """
+
+        :param previous_dec_output: decoder output of previous layer, or last encoder output at encoder/decoder junction
+        :param enc_output:
+        :param slf_attn_mask:
+        :param dec_enc_attn_mask:
+        :return: """
+        # 1) attention enc_output with itself:
+        # e.g., enc_output.size()=(bs,timesteps, 64)
+
+        enc_output, dec_slf_attn = self.slf_attn(enc_output, enc_output, enc_output, attn_mask=slf_attn_mask)
+
+        dec_output, dec_enc_attn = self.enc_attn(previous_dec_output, enc_output, enc_output,
+                                                     attn_mask=slf_attn_mask if self.is_first_decoder_layer else
+                                                      dec_enc_attn_mask)
+
+        dec_output, dec_slf_attn = self.slf_attn(dec_output, dec_output, dec_output, attn_mask=slf_attn_mask)
         dec_output = self.pos_ffn(dec_output)
 
         return dec_output, dec_slf_attn, dec_enc_attn
@@ -348,7 +365,9 @@ class Decoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
         layer_manager=ConstantDimLayerManager(d_model) if True else DoubleEachLayerManager(constant_dimension=d_model,increase_factor=2)
         self.layer_stack = nn.ModuleList([
-            FunnelDecoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout, layer_index=(layer_index),layer_manager=layer_manager)
+            FunnelDecoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout, layer_index=(layer_index),
+                               layer_manager=layer_manager,
+                               is_first_decoder_layer=layer_index==n_layers-1)
             for layer_index in list(range(n_layers-1,-1,-1))])
 
     def forward(self, tgt_seq, tgt_pos, src_seq, enc_output, return_attns=False):
@@ -359,18 +378,19 @@ class Decoder(nn.Module):
         dec_input += self.position_enc(tgt_pos)
 
         # Decode
-        dec_slf_attn_pad_mask = get_attn_padding_mask(tgt_seq, tgt_seq)
-        dec_slf_attn_sub_mask = get_attn_subsequent_mask(tgt_seq)
-        dec_slf_attn_mask = torch.gt(dec_slf_attn_pad_mask + dec_slf_attn_sub_mask, 0)
-        # use encoded sequence to determine length of source:
-        dec_enc_attn_pad_mask = get_attn_padding_mask(tgt_seq, enc_output)
 
         if return_attns:
             dec_slf_attns, dec_enc_attns = [], []
 
-        dec_output = dec_input
+        dec_output = enc_output
         for dec_layer in self.layer_stack:
             #print("dec_output.size: {}".format(dec_output.size()))
+            dec_slf_attn_pad_mask = get_attn_padding_mask(dec_output, dec_output)
+            dec_slf_attn_sub_mask = get_attn_subsequent_mask(dec_output)
+            dec_slf_attn_mask = torch.gt(dec_slf_attn_pad_mask + dec_slf_attn_sub_mask, 0)
+            # use encoded sequence to determine length of source:
+            dec_enc_attn_pad_mask = get_attn_padding_mask(dec_output, enc_output)
+
             dec_output, dec_slf_attn, dec_enc_attn = dec_layer(
                 dec_output, enc_output,
                 slf_attn_mask=dec_slf_attn_mask,

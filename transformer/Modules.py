@@ -73,6 +73,7 @@ class ScaledDotProductAttention(nn.Module):
 
     def __init__(self, d_model, attn_dropout=0.1):
         super(ScaledDotProductAttention, self).__init__()
+        # TODO: should temper be np.power(d_k, 0.5)? see http://nlp.seas.harvard.edu/2018/04/03/attention.html#attention
         self.temper = np.power(d_model, 0.5)
         self.dropout = nn.Dropout(attn_dropout)
         self.softmax = BottleSoftmax()

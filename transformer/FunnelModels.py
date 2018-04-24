@@ -102,6 +102,50 @@ class ProbabilisticSkipper(nn.Module):
         return torch.stack(padded, dim=0)
 
 
+class HalfSequenceSkipper(nn.Module):
+    """Skip sequence time steps deterministically, always returns the second half of the sequence."""
+
+    def __init__(self):
+        super(HalfSequenceSkipper, self).__init__()
+        self.noise = torch.Tensor()
+
+    def forward(self, x, skipping_probs):
+        batch_size = x.size(0)
+        seq_length = x.size(1)
+        encoding_dim = x.size(2)
+
+        noise = torch.Tensor()
+        if x.is_cuda:
+            noise = noise.cuda()
+
+        noise.resize_as_(skipping_probs.data)
+        noise[:,0:int(seq_length/2),:]=0
+        noise[:,int(seq_length/2):seq_length,:]=1
+        # following variable contains 1 in timestepts that will be kept, 0 otherwise:
+        keeping_timesteps = Variable(1 - noise)
+        list_of_example_sequences = x.split(dim=0, split_size=1)
+        reduced_seqs = []
+        max_length = 0
+        for index, seq in enumerate(list_of_example_sequences):
+            try:
+                index_of_kept_timesteps = keeping_timesteps[index].squeeze().nonzero().squeeze()
+                selected_time_steps = seq.index_select(dim=1, index=index_of_kept_timesteps)
+                # selected_time_steps has dimension: 1 x seq_length x encoding_dim
+                reduced_seqs += [selected_time_steps]
+                # print(selected_time_steps)
+                max_length = max(max_length, selected_time_steps.size(1))
+            except RuntimeError as e:
+                print(e)
+                # reduced_seqs
+        max_length, [seq[0].size() for seq in reduced_seqs]
+        padded = []
+        for seq in reduced_seqs:
+            padded += [
+                torch.nn.functional.pad(seq[0], pad=(0, 0, 0, max_length - seq[0].size(0)), mode='constant', value=0)]
+
+        return torch.stack(padded, dim=0)
+
+
 class MultiProbabilisticSkipper(nn.Module):
     """Skip sequence time steps according to a probabilistic plan."""
 
@@ -172,6 +216,21 @@ class LayerManager():
     def get_output_dim(self, layer_index):
         return 0
 
+class DecoderLayerManager(LayerManager):
+    """Use this adapter for decoder layers. It reverses the input/output dimensions."""
+    def __init__(self, delegate,num_layers):
+        self.delegate=delegate
+        self.num_layers=num_layers
+
+    def get_input_dim(self, layer_index):
+        return self.delegate.get_output_dim(layer_index)
+
+    def get_hidden_dim(self, layer_index):
+        return self.delegate.get_hidden_dim(layer_index)
+
+    def get_output_dim(self, layer_index):
+        return self.delegate.get_input_dim(layer_index)
+
 
 class ConstantDimLayerManager(LayerManager):
     def __init__(self, constant_dimension):
@@ -233,7 +292,8 @@ class PositionwiseFeedForwardFunnel(nn.Module):
 class FunnelEncoderLayer(nn.Module):
     ''' Compose with two layers and add probabilistic token skipping '''
 
-    def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1, layer_index=-1, layer_manager=None):
+    def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1, layer_index=-1, layer_manager=None,
+                 skipper=ProbabilisticSkipper()):
         super(FunnelEncoderLayer, self).__init__()
         assert layer_manager is None or layer_index != -1, "layer index must be defined"
         if layer_manager is None:
@@ -250,7 +310,7 @@ class FunnelEncoderLayer(nn.Module):
                                                      layer_manager.get_hidden_dim(layer_index=layer_index),
                                                      dropout=dropout)
         self.prob_estimator = SkippingProbability(encoding_dim=d_model)
-        self.skipper = ProbabilisticSkipper()
+        self.skipper = skipper
 
     def forward(self, enc_input, slf_attn_mask=None):
         # estimate skipping probabilities from input, and sample some tokens:
@@ -325,13 +385,13 @@ class FunnelDecoderLayer(nn.Module):
         if layer_manager is None:
             layer_manager = ConstantDimLayerManager(constant_dimension=d_model)
         self.is_first_decoder_layer = is_first_decoder_layer
-        first_level_encoding_dim = d_model
+
         d_model_in = layer_manager.get_input_dim(layer_index)
         d_model_out = layer_manager.get_output_dim(layer_index)
         self.layer_index = layer_index
         self.d_model = d_model_in
         d_out = layer_manager.get_output_dim(layer_index)
-        print("decoder, layer_index={} d_model: {} d_out: {}".format(layer_index, d_model, d_out))
+        print("decoder, layer_index={} d_model: {} d_out: {}".format(layer_index, d_model_in, d_out))
         # self attention works on initial-level encodings
         self.slf_attn = MultiHeadAttention(n_head, d_model_in, d_k, d_v, dropout=dropout)
         self.enc_attn = MultiHeadAttention(n_head, d_model_in, d_k, d_v, dropout=dropout)
@@ -386,8 +446,10 @@ class Decoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
         layer_manager = ConstantDimLayerManager(d_model) if not use_variable_encoding_sizes else DoubleEachLayerManager(
             constant_dimension=d_model, increase_factor=2)
+        layer_manager=DecoderLayerManager(layer_manager,n_layers)
         self.layer_stack = nn.ModuleList([
-            FunnelDecoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout, layer_index=(layer_index),
+            FunnelDecoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout,
+                               layer_index=(layer_index),
                                layer_manager=layer_manager,
                                is_first_decoder_layer=layer_index == n_layers - 1)
             for layer_index in list(range(n_layers - 1, -1, -1))])

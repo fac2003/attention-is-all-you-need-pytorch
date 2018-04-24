@@ -48,38 +48,44 @@ class Encoder(nn.Module):
     def __init__(self, layer, N):
         super(Encoder, self).__init__()
         self.layers = clones(layer, N)
-        self.norms = clones(LayerNorm(layer.output_size), N)
+        self.norm = LayerNorm(layer.output_size)
 
     def reconfigure(self, layer_manager):
+        layer_index = 0
         for layer_index, layer in enumerate(self.layers):
             encoder_layer_index = layer_index
             layer.reconfigure(encoder_layer_index, layer_manager)
 
-        for layer_index, norm in enumerate(self.norms):
-            norm.reconfigure(layer_index, layer_manager)
+        self.norm.reconfigure(layer_index, layer_manager)
 
     def forward(self, x, mask):
         "Pass the input (and mask) through each layer in turn."
         for layer_index, layer in enumerate(self.layers):
             x = layer(x, mask)
-            x = self.norms[layer_index](x)
-        return x
+
+        return self.norm(x)
 
 
 class LayerNorm(nn.Module):
     "Construct a layernorm module (See citation for details)."
 
-    def __init__(self, features, eps=1e-6):
+    def __init__(self, features, eps=1e-6, normalize_output=True):
         super(LayerNorm, self).__init__()
         self.a_2 = nn.Parameter(torch.ones(features))
         self.b_2 = nn.Parameter(torch.zeros(features))
         self.eps = eps
+        self.layer_index = -1
+        self.normalize_output = normalize_output
 
     def reconfigure(self, layer_index, layer_manager):
         # layer norm is applied to the output of the layer:
-        features_size = layer_manager.get_output_dim(layer_index)
+
+        features_size = layer_manager.get_output_dim(layer_index) if self.normalize_output else \
+            layer_manager.get_input_dim(layer_index)
+        print("reconfiguring layerNorm {} with {} output_dim".format(layer_index, features_size))
         self.a_2 = nn.Parameter(torch.ones(features_size))
         self.b_2 = nn.Parameter(torch.zeros(features_size))
+        self.layer_index = layer_index
 
     def forward(self, x):
         mean = x.mean(-1, keepdim=True)
@@ -96,13 +102,14 @@ class EncoderLayer(nn.Module):
         self.feed_forward = feed_forward
         self.sublayer = clones(FunnelSublayerConnection(size, dropout), 2)
         self.output_size = size
-        self.layer_index=-1
+        self.layer_index = -1
+
     def reconfigure(self, layer_index, layer_manager):
         self.self_attn.reconfigure(layer_index, layer_manager)
         self.feed_forward.reconfigure(layer_index, layer_manager)
         for sublayer in self.sublayer:
             sublayer.reconfigure(layer_index, layer_manager)
-        self.layer_index =layer_index
+        self.layer_index = layer_index
         self.output_size = layer_manager.get_output_dim(layer_index)
 
     def forward(self, x, mask):
@@ -119,8 +126,11 @@ class SublayerConnection(nn.Module):
 
     def __init__(self, size, dropout):
         super(SublayerConnection, self).__init__()
-        self.norm = LayerNorm(size)
+        self.norm = LayerNorm(size, normalize_output=False)
         self.dropout = nn.Dropout(dropout)
+
+    def reconfigure(self, layer_index, layer_manager):
+        self.norm.reconfigure(layer_index, layer_manager)
 
     def forward(self, x, sublayer):
         "Apply residual connection to any sublayer with the same size."
@@ -135,31 +145,39 @@ class FunnelSublayerConnection(nn.Module):
 
     def __init__(self, size, dropout):
         super(FunnelSublayerConnection, self).__init__()
-        self.norm = LayerNorm(size)
+        self.norm = LayerNorm(size, normalize_output=False)
         self.dropout = nn.Dropout(dropout)
         self.linear = None
         self.d_model_in = size
         self.d_model_out = size
-        self.layer_index =-1
+        self.layer_index = -1
 
     def reconfigure(self, layer_index, layer_manager):
         d_model_in = layer_manager.get_input_dim(layer_index)
-        d_model_out = layer_manager.get_output_dim(layer_index)
-        self.linear = nn.Linear(d_model_in + d_model_out, d_model_out)
+        # d_model_out = layer_manager.get_output_dim(layer_index)
+        self.linear = {}
         self.d_model_in = d_model_in
-        self.d_model_out = d_model_out
-        self.layer_index=layer_index
+
+        self.layer_index = layer_index
+        self.norm.reconfigure(layer_index, layer_manager)
 
     def forward(self, x, sublayer):
         "Apply residual connection to any sublayer with the same size."
         residual = x
-        layer_output_normalized = self.dropout(sublayer(self.norm(x)))
-        if self.linear is None:  # or x.size(2)==layer_output_normalized.size(2):
-            return x + layer_output_normalized
+        layer_output_normalized = self.dropout(sublayer(x))
+        if self.linear is None or x.size(2) == layer_output_normalized.size(2):
+            result = x + layer_output_normalized
         else:
-            return self.linear(torch.cat([residual.view(-1, self.d_model_in),
-                                          layer_output_normalized.view(-1, self.d_model_out)], dim=1
-                                         ))                               .view(x.size(0), x.size(1), self.d_model_out)
+            size_a = residual.size(2)
+            size_b = layer_output_normalized.size(2)
+            linear = nn.Linear(size_a+size_b, size_a)
+            self.linear[(size_a, size_b)] = linear
+
+            inputs = torch.cat([residual.view(-1, size_a),
+                                layer_output_normalized.view(-1, size_b)], dim=1)
+            result = linear(inputs).view(x.size(0), x.size(1), -1)
+
+        return self.norm(result)
 
 
 class Decoder(nn.Module):
@@ -169,21 +187,20 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
         self.layers = clones(layer, N)
         self.N = N
-        self.norms = clones(LayerNorm(layer.size), N)
+        self.norm = LayerNorm(layer.size)
 
     def reconfigure(self, layer_manager):
+        layer_index = 0
         for layer_index, layer in enumerate(self.layers):
             decoder_layer_index = self.N - 1 - layer_index
             layer.reconfigure(decoder_layer_index, layer_manager)
 
-        for layer_index, norm in enumerate(self.norms):
-            norm.reconfigure(layer_index, layer_manager)
+        self.norm.reconfigure(layer_index, layer_manager)
 
     def forward(self, x, memory, src_mask, tgt_mask):
         for layer_index, layer in enumerate(self.layers):
             x = layer(x, memory, src_mask, tgt_mask)
-            x = self.norms[layer_index](x)
-        return x
+        return self.norm(x)
 
 
 class DecoderLayer(nn.Module):

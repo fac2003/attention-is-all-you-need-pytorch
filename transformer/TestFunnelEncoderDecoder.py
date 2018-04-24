@@ -4,7 +4,8 @@ import torch
 from torch.autograd import Variable
 
 from transformer.FunnelModels import ConstantDimLayerManager, FunnelEncoderLayer, FunnelDecoderLayer, \
-    DoubleEachLayerManager, DecoderLayerManager, HalfSequenceSkipper
+    DoubleEachLayerManager, DecoderLayerManager, HalfSequenceSkipper, ConstantSequenceLengthManager, \
+    ProbabilisticExpander, ProbabilisticSkipper
 
 
 class MyTestCase(unittest.TestCase):
@@ -22,15 +23,16 @@ class MyTestCase(unittest.TestCase):
 
         encoder_layer = FunnelEncoderLayer(d_model, d_inner_hid, n_head, d_k, d_v,
                                            dropout=0, layer_index=1,
-                                           layer_manager=layer_manager)
+                                           layer_manager=layer_manager,skipper=HalfSequenceSkipper())
 
         decoder_layer = FunnelDecoderLayer(d_model, d_inner_hid, n_head, d_k, d_v,
                                            dropout=0, layer_index=1,
                                            layer_manager=layer_manager,
-                                           is_first_decoder_layer=True)
+                                           is_first_decoder_layer=True,
+                                           expander=None)
 
         result, attention_result = encoder_layer.forward(encoder_input)
-        previous_decoder_output=encoder_input
+        previous_decoder_output = encoder_input
         dec_output, dec_slf_attn, dec_enc_attn = decoder_layer.forward(previous_decoder_output, encoder_input,
                                                                        slf_attn_mask=attention_mask)
         self.assertEqual(dec_output.size(2), 8)
@@ -51,16 +53,20 @@ class MyTestCase(unittest.TestCase):
 
         encoder_layer = FunnelEncoderLayer(d_model, d_inner_hid, n_head, d_k, d_v,
                                            dropout=0, layer_index=1,
-                                           layer_manager=layer_manager,skipper=HalfSequenceSkipper())
-        layer_manager=DecoderLayerManager(layer_manager,1)
+                                           layer_manager=layer_manager,
+                                           skipper=HalfSequenceSkipper())
+
+
+        layer_manager = DecoderLayerManager(layer_manager, 1)
         decoder_layer = FunnelDecoderLayer(d_model, d_inner_hid, n_head, d_k, d_v,
                                            dropout=0, layer_index=1,
                                            layer_manager=layer_manager,
-                                           is_first_decoder_layer=True)
+                                           is_first_decoder_layer=True,
+                                           expander=None)
 
         result, attention_result = encoder_layer.forward(encoder_input)
         self.assertEqual(result.size(2), 32)
-        previous_decoder_output=result
+        previous_decoder_output = result
         dec_output, dec_slf_attn, dec_enc_attn = decoder_layer.forward(previous_decoder_output, previous_decoder_output,
                                                                        slf_attn_mask=encoded_attention_mask)
         self.assertEqual(dec_output.size(2), 16)

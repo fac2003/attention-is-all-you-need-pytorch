@@ -77,7 +77,7 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol):
 
 V = 11
 criterion = LabelSmoothing(size=V, padding_idx=0, smoothing=0.0)
-model = make_model(V, V, N=2,d_model=16, d_ff=32,max_length=20)
+model = make_funnel_model(V, V, N=2,d_model=16, d_ff=32,max_length=20)
 print(model)
 model_opt = NoamOpt(model.src_embed[0].d_model, 1, 400,
         torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))

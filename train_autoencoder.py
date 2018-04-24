@@ -59,7 +59,7 @@ def train_epoch(model, training_data, crit, optimizer, opt):
     if opt.cuda:
         padding_indices = padding_indices.cuda()
         signal_indices = signal_indices.cuda()
-
+    mse_loss= nn.MSELoss()
     for batch in tqdm(
             training_data, mininterval=2,
             desc='  - (Training)   ', leave=False):
@@ -73,14 +73,22 @@ def train_epoch(model, training_data, crit, optimizer, opt):
         # put source in gold:
 
         (pred, encoded_output) = model(src, target)
+        print("pred length: {} target length: {} ".format(pred.size(1), target[0].size(1)))
         if hasattr(model.padding_amount,"data"):
             average_padding_factor += model.padding_amount.data[0]
         # backward
+        # match the sum of the sequence elemnts in prediction and target to encourage lengths to match:
+        batch_size = pred.size(0)
+        encoding_size = pred.size(2)
+        abs_pred=torch.abs(pred)
+        pred_length_proxy=torch.sum(abs_pred)/torch.mean(abs_pred)/batch_size/encoding_size
 
+        #length_loss=mse_loss(pred_length_proxy,Variable(torch.FloatTensor([target[0].size(1)]),requires_grad=False))
         loss, n_correct = get_performance(crit, pred, target[0])
 
         # encourage the encoding with lots of padding (minimize sequence length):
-        loss = loss - model.padding_amount * opt.sparsity
+        loss = loss - model.padding_amount * opt.sparsity #+ length_loss
+        #loss = length_loss
         loss.backward()
 
         # update parameters

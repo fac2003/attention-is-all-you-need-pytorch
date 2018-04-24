@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from torch.autograd import Variable
+from torch.nn import Parameter
 
 import transformer.Constants as Constants
 from transformer.Modules import BottleLinear as Linear, LayerNormalization
@@ -12,8 +13,17 @@ from transformer.SubLayers import MultiHeadAttention, PositionwiseFeedForward
 
 # Code adapted from Yu-Hsiang Huang Transfomer implementation.
 __author__ = "Fabien Campagne"
-use_variable_encoding_sizes = True
-
+use_variable_encoding_sizes = False
+def weights_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Linear') != -1:
+        if hasattr(m, 'weight'):
+            torch.nn.init.normal(m.weight.data)
+            torch.nn.init.normal(m.bias.data)
+    else:
+        for p in m.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform(p)
 
 def position_encoding_init(n_position, d_pos_vec):
     ''' Init the sinusoid position encoding table '''
@@ -62,13 +72,16 @@ def get_attn_subsequent_mask(seq):
 class ProbabilisticSkipper(nn.Module):
     """Skip sequence time steps according to a probabilistic plan."""
 
-    def __init__(self):
+    def __init__(self, layer_index=-1, sequence_length_manager=None):
         super(ProbabilisticSkipper, self).__init__()
         self.noise = torch.Tensor()
+        assert sequence_length_manager is not None, "sequence_length_manager must be attached."
+        self.layer_index = layer_index
+        self.sequence_length_manager = sequence_length_manager
 
     def forward(self, x, skipping_probs):
         batch_size = x.size(0)
-        seq_length = x.size(1)
+        current_length = x.size(1)
         encoding_dim = x.size(2)
 
         noise = torch.Tensor()
@@ -94,6 +107,9 @@ class ProbabilisticSkipper(nn.Module):
                 print(e)
                 # reduced_seqs
         max_length, [seq[0].size() for seq in reduced_seqs]
+        min_sequence_length = self.sequence_length_manager.get_reduced_length(layer_index=self.layer_index,
+                                                                              source_length=current_length)
+        max_length = max(max_length, min_sequence_length)
         padded = []
         for seq in reduced_seqs:
             padded += [
@@ -119,8 +135,8 @@ class HalfSequenceSkipper(nn.Module):
             noise = noise.cuda()
 
         noise.resize_as_(skipping_probs.data)
-        noise[:,0:int(seq_length/2),:]=0
-        noise[:,int(seq_length/2):seq_length,:]=1
+        noise[:, 0:int(seq_length / 2), :] = 0
+        noise[:, int(seq_length / 2):seq_length, :] = 1
         # following variable contains 1 in timestepts that will be kept, 0 otherwise:
         keeping_timesteps = Variable(1 - noise)
         list_of_example_sequences = x.split(dim=0, split_size=1)
@@ -144,6 +160,85 @@ class HalfSequenceSkipper(nn.Module):
                 torch.nn.functional.pad(seq[0], pad=(0, 0, 0, max_length - seq[0].size(0)), mode='constant', value=0)]
 
         return torch.stack(padded, dim=0)
+
+
+class SequenceLengthManager:
+    def get_max_sequence_length(self, layer_index):
+        return 0
+
+    def get_expanded_length(self, layer_index, source_length):
+        return source_length
+
+    def get_reduced_length(self, layer_index, source_length):
+        return source_length
+
+
+class ConstantSequenceLengthManager(SequenceLengthManager):
+    def __init__(self, constant_length):
+        self.constant_length = constant_length
+
+    def get_max_sequence_length(self, layer_index):
+        return self.constant_length;
+    def get_expanded_length(self, layer_index, source_length):
+        return max(source_length,self.constant_length)
+
+    def get_reduced_length(self, layer_index, source_length):
+        return max(source_length, self.constant_length)
+
+
+class ProbabilisticExpander(nn.Module):
+    """Expand sequences to new lengths,  according to a probabilistic plan."""
+
+    def __init__(self, layer_index, sequence_length_manager=None):
+        super(ProbabilisticExpander, self).__init__()
+        self.noise = torch.Tensor()
+        self.expansion_parameter = Parameter(torch.FloatTensor([0.2]))
+        self.register_parameter("expansion_parameter", self.expansion_parameter)
+        assert sequence_length_manager is not None, "A sequence length manager must be defined."
+        self.sequence_length_manager = sequence_length_manager
+        self.layer_index = layer_index
+
+    def forward(self, x, expanding_probs):
+        batch_size = x.size(0)
+        seq_length = x.size(1)
+        encoding_dim = x.size(2)
+
+        noise = torch.Tensor()
+        if x.is_cuda:
+            noise = noise.cuda()
+        # print("expansion_parameter={}".format(self.expansion_parameter))
+        noise.resize_as_(expanding_probs.data)
+        noise.bernoulli_(expanding_probs.data)
+        # following variable contains 1 in timestets that will be kept, 0 otherwise:
+        expanding_timesteps = Variable(1 - noise, requires_grad=True).type(torch.FloatTensor)
+
+        max_additional_length = 0
+        current_length = x.size(1)
+
+        num_expanded_timesteps = torch.sum(expanding_timesteps, dim=1)
+        for seq_index in range(batch_size):
+            max_additional_length = max(num_expanded_timesteps[seq_index, 0].data[0], max_additional_length)
+        max_sequence_length = self.sequence_length_manager.get_expanded_length(layer_index=self.layer_index,
+                                                                               source_length=current_length)
+        padding_needed = max(0, max_sequence_length - current_length)
+        return torch.nn.functional.pad(x, pad=(0, 0, 0, padding_needed), mode='constant', value=0)
+
+
+class GlobalParameterExpander(nn.Module):
+    """Expand sequences to new lengths,  according to a probabilistic plan."""
+
+    def __init__(self):
+        super(ProbabilisticExpander, self).__init__()
+        self.noise = torch.Tensor()
+        self.expansion_parameter = Parameter(torch.FloatTensor([2]))
+        self.register_parameter("expansion_parameter", self.expansion_parameter)
+
+    def forward(self, x):
+        current_length = x.size(1)
+
+        new_max_sequence_length = current_length * (1 + torch.abs(self.expansion_parameter))
+        print("expansion_parameter={}".format(self.expansion_parameter))
+        return torch.nn.functional.pad(x, pad=(0, 0, 0, int(new_max_sequence_length)), mode='constant', value=0)
 
 
 class MultiProbabilisticSkipper(nn.Module):
@@ -216,11 +311,13 @@ class LayerManager():
     def get_output_dim(self, layer_index):
         return 0
 
+
 class DecoderLayerManager(LayerManager):
     """Use this adapter for decoder layers. It reverses the input/output dimensions."""
-    def __init__(self, delegate,num_layers):
-        self.delegate=delegate
-        self.num_layers=num_layers
+
+    def __init__(self, delegate, num_layers):
+        self.delegate = delegate
+        self.num_layers = num_layers
 
     def get_input_dim(self, layer_index):
         return self.delegate.get_output_dim(layer_index)
@@ -293,11 +390,12 @@ class FunnelEncoderLayer(nn.Module):
     ''' Compose with two layers and add probabilistic token skipping '''
 
     def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1, layer_index=-1, layer_manager=None,
-                 skipper=ProbabilisticSkipper()):
+                 skipper=None):
         super(FunnelEncoderLayer, self).__init__()
         assert layer_manager is None or layer_index != -1, "layer index must be defined"
         if layer_manager is None:
             layer_manager = ConstantDimLayerManager(d_model)
+
         d_model = layer_manager.get_input_dim(layer_index=layer_index)
         d_out = layer_manager.get_output_dim(layer_index=layer_index)
         print("encoder, layer_index={} d_model: {} d_out: {}".format(layer_index, d_model, d_out))
@@ -311,11 +409,13 @@ class FunnelEncoderLayer(nn.Module):
                                                      dropout=dropout)
         self.prob_estimator = SkippingProbability(encoding_dim=d_model)
         self.skipper = skipper
+        self.apply(weights_init)
 
     def forward(self, enc_input, slf_attn_mask=None):
         # estimate skipping probabilities from input, and sample some tokens:
-        skip_probs = self.prob_estimator(enc_input)
-        enc_input = self.skipper(enc_input, skip_probs)
+        if self.skipper is not None:
+            skip_probs = self.prob_estimator(enc_input)
+            enc_input = self.skipper(enc_input, skip_probs)
         # recalculate mask now that sequence lengths have changed:
         slf_attn_mask = get_attn_padding_mask(enc_input, enc_input)
         enc_output, enc_slf_attn = self.slf_attn(
@@ -329,7 +429,8 @@ class Encoder(nn.Module):
 
     def __init__(
             self, n_src_vocab, n_max_seq, n_layers=6, n_head=8, d_k=64, d_v=64,
-            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1):
+            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1,
+            sequence_length_manager=None):
 
         super(Encoder, self).__init__()
 
@@ -341,12 +442,15 @@ class Encoder(nn.Module):
         self.position_enc.weight.data = position_encoding_init(n_position, d_word_vec)
 
         self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=Constants.PAD)
+
+
         layer_manager = ConstantDimLayerManager(d_model) if not use_variable_encoding_sizes else DoubleEachLayerManager(
             constant_dimension=d_model,
             increase_factor=2)
         self.layer_stack = nn.ModuleList([
             FunnelEncoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout, layer_index=layer_index,
-                               layer_manager=layer_manager)
+                               layer_manager=layer_manager,
+                               skipper=None)
             for layer_index in range(n_layers)])
 
     def forward(self, src_seq, src_pos, return_attns=False):
@@ -380,7 +484,7 @@ class FunnelDecoderLayer(nn.Module):
     ''' Compose with three layers '''
 
     def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1, layer_index=-1,
-                 layer_manager=None, is_first_decoder_layer=False):
+                 layer_manager=None, is_first_decoder_layer=False, expander=None):
         super(FunnelDecoderLayer, self).__init__()
         if layer_manager is None:
             layer_manager = ConstantDimLayerManager(constant_dimension=d_model)
@@ -399,6 +503,10 @@ class FunnelDecoderLayer(nn.Module):
                                                      d_output=d_model_out,
                                                      d_inner_hid=layer_manager.get_hidden_dim(layer_index),
                                                      dropout=dropout)
+        # use a SkippingProbability estimator to estimate if a position must be duplicated:
+        self.prob_estimator = SkippingProbability(encoding_dim=d_model_out)
+        self.expander = expander
+        self.apply(weights_init)
 
     def forward(self, previous_dec_output, enc_output, slf_attn_mask=None, dec_enc_attn_mask=None):
         """
@@ -410,18 +518,21 @@ class FunnelDecoderLayer(nn.Module):
         # 1) attention enc_output with itself:
         # e.g., enc_output.size()=(bs,timesteps, 64)
 
-        enc_output, dec_slf_attn = self.slf_attn(previous_dec_output, previous_dec_output, previous_dec_output, attn_mask=slf_attn_mask)
+        enc_output, dec_slf_attn = self.slf_attn(previous_dec_output, previous_dec_output, previous_dec_output,
+                                                 attn_mask=slf_attn_mask)
         if self.is_first_decoder_layer:
             dec_output, dec_enc_attn = self.enc_attn(enc_output, previous_dec_output, previous_dec_output,
                                                      attn_mask=slf_attn_mask if self.is_first_decoder_layer else
                                                      dec_enc_attn_mask)
         else:
-            dec_output=enc_output
-            dec_enc_attn=None
+            dec_output = enc_output
+            dec_enc_attn = None
 
         # dec_output, dec_slf_attn = self.slf_attn(dec_output, dec_output, dec_output, attn_mask=slf_attn_mask)
         dec_output = self.pos_ffn(dec_output)
-
+        if self.expander is not None:
+            expanding_probs = self.prob_estimator(dec_output)
+            dec_output = self.expander(dec_output, expanding_probs=expanding_probs)
         return dec_output, dec_slf_attn, dec_enc_attn
 
 
@@ -430,7 +541,8 @@ class Decoder(nn.Module):
 
     def __init__(
             self, n_tgt_vocab, n_max_seq, n_layers=6, n_head=8, d_k=64, d_v=64,
-            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1):
+            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1,
+            slm=None):
 
         super(Decoder, self).__init__()
         n_position = n_max_seq + 1
@@ -446,12 +558,14 @@ class Decoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
         layer_manager = ConstantDimLayerManager(d_model) if not use_variable_encoding_sizes else DoubleEachLayerManager(
             constant_dimension=d_model, increase_factor=2)
-        layer_manager=DecoderLayerManager(layer_manager,n_layers)
+        layer_manager = DecoderLayerManager(layer_manager, n_layers)
+
         self.layer_stack = nn.ModuleList([
             FunnelDecoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout,
                                layer_index=(layer_index),
                                layer_manager=layer_manager,
-                               is_first_decoder_layer=layer_index == n_layers - 1)
+                               is_first_decoder_layer=layer_index == n_layers - 1,
+                               expander=None)
             for layer_index in list(range(n_layers - 1, -1, -1))])
 
     def forward(self, tgt_seq, tgt_pos, src_seq, enc_output, return_attns=False):

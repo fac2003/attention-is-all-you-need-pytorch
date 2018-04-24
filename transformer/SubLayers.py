@@ -35,7 +35,7 @@ class MultiHeadAttention(nn.Module):
         init.xavier_normal(self.w_vs)
 
     def forward(self, q, k, v, attn_mask=None):
-
+        assert attn_mask is not None, "attn_mask cannot be None"
         d_k, d_v = self.d_k, self.d_v
         n_head = self.n_head
 

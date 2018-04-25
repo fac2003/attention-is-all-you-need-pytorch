@@ -19,6 +19,8 @@ class TrainedLinearTransform:
         self.output_encoding_dim=output_encoding_dim
         self.is_trained = False
         self.max_epochs = 10
+        self.optimizer = optim.Adam(self.autoencoder.parameters(), betas=(0.9, 0.98), eps=1e-09,
+                                    lr=1e-4)
 
     def encode(self,sequences):
         if not self.is_trained:
@@ -28,19 +30,17 @@ class TrainedLinearTransform:
 
     def train(self, sequences):
 
-
-
         self.autoencoder.train()
-        optimizer = optim.Adam(self.autoencoder.parameters(), betas=(0.9, 0.98), eps=1e-09, lr=1e-3)
         mse = MSELoss()
         #for epoch in range(self.max_epochs):
         self.autoencoder.zero_grad()
-        optimizer.zero_grad()
+        self.optimizer.zero_grad()
         encoded = self.encoder(Variable(sequences.data, requires_grad=True))
         result = self.decoder(encoded)
         loss = mse(result, Variable(sequences.data, requires_grad=False))
+        #print("adjuster loss: {}".format(loss.data[0]))
         loss.backward()
-        optimizer.step()
+        self.optimizer.step()
         #self.is_trained=True
 
 

@@ -90,7 +90,7 @@ def train_epoch(model, training_data, crit, optimizer, opt):
         # note keeping
         n_words = src[0].data.ne(Constants.PAD).sum()
         n_total_words += n_words
-        n_total_correct += n_correct
+        n_total_correct +=n_correct
         total_loss += loss.data[0]
         num_sequences += 1
 

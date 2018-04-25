@@ -27,13 +27,15 @@ class PositionalEncoding(nn.Module):
         self.pe_dict[d_model] = pe
         self.register_buffer('pe_'+str(d_model), pe)
 
-    def reconfigure(self, layer_manager,N):
+    def reconfigure(self, layer_manager,N, d_model=-1):
         for layer_index in range(N):
-            d_model=layer_manager.get_output_dim(layer_index)
+            d_model=layer_manager.get_output_dim(layer_index) if d_model==-1 else d_model
             self.initialize(d_model)
 
     def forward(self, x):
         d_model=x.size(2)
+        if d_model not in self.pe_dict:
+            self.initialize(d_model)
         pe = self.pe_dict[d_model]
         x = x + Variable(pe[:, :x.size(1)],
                          requires_grad=False)

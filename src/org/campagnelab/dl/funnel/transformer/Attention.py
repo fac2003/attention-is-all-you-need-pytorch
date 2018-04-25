@@ -32,9 +32,9 @@ class MultiHeadedAttention(nn.Module):
         self.attn = None
         self.dropout = nn.Dropout(p=dropout)
 
-    def reconfigure(self, layer_index, layer_manager):
-        d_model_input=layer_manager.get_input_dim(layer_index)
-        d_model_output=layer_manager.get_output_dim(layer_index)
+    def reconfigure(self, layer_index, layer_manager,layer_dim_in=-1, layer_dim_out=-1):
+        d_model_input=layer_manager.get_input_dim(layer_index) if layer_dim_in==-1 else layer_dim_in
+        d_model_output=layer_manager.get_output_dim(layer_index) if layer_dim_out==-1 else layer_dim_out
         assert d_model_input % self.h == 0
         self.d_k = d_model_input // self.h
         self.d_model_input=d_model_input

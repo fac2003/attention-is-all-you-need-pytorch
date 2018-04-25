@@ -1,9 +1,10 @@
 import copy
 
 from src.org.campagnelab.dl.funnel.transformer.Attention import MultiHeadedAttention
+from src.org.campagnelab.dl.funnel.transformer.Decoder import Decoder, DecoderLayer
 from src.org.campagnelab.dl.funnel.transformer.Embedding import Embeddings
-from src.org.campagnelab.dl.funnel.transformer.EncoderDecoder import EncoderDecoder, EncoderLayer, Encoder, Decoder, \
-    DecoderLayer
+from src.org.campagnelab.dl.funnel.transformer.Encoder import Encoder, EncoderLayer
+from src.org.campagnelab.dl.funnel.transformer.EncoderDecoder import EncoderDecoder
 from src.org.campagnelab.dl.funnel.transformer.FeedForward import PositionwiseFeedForward
 from src.org.campagnelab.dl.funnel.transformer.Generator import Generator
 from src.org.campagnelab.dl.funnel.transformer.PositionalEncoding import PositionalEncoding, EmbeddingEncoding

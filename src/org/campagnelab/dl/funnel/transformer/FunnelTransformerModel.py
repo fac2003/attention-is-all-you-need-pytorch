@@ -7,18 +7,18 @@ from src.org.campagnelab.dl.funnel.transformer.Encoder import EncoderLayer, Enco
 from src.org.campagnelab.dl.funnel.transformer.EncoderDecoder import EncoderDecoder
 from src.org.campagnelab.dl.funnel.transformer.FeedForward import PositionwiseFeedForward
 from src.org.campagnelab.dl.funnel.transformer.Generator import Generator
-from src.org.campagnelab.dl.funnel.transformer.PositionalEncoding import PositionalEncoding, EmbeddingEncoding
+from src.org.campagnelab.dl.funnel.transformer.PositionalEncoding import PositionalEncoding
 
 import torch.nn as nn
 
 from transformer.FunnelModels import DoubleEachLayerManager, ConstantDimLayerManager
 
 
-def make_funnel_model(src_vocab, tgt_vocab, N=6,
+def make_funnel_model_1(src_vocab, tgt_vocab, N=6,
                       d_model=512, d_ff=2048, h=8, dropout=0.1,
                       max_length=-1):
     "Helper: Construct a model from hyperparameters."
-    layer_manager = DoubleEachLayerManager(constant_dimension=d_model, increase_factor=2)
+    layer_manager = ConstantDimLayerManager(constant_dimension=d_model)
     d_model=layer_manager.get_input_dim(layer_index=0)
     c = copy.deepcopy
     attn = MultiHeadedAttention(h, d_model)
@@ -38,6 +38,32 @@ def make_funnel_model(src_vocab, tgt_vocab, N=6,
     # layer_manager=ConstantDimLayerManager(d_model)
     model.reconfigure(layer_manager)
 
+    # This was important from their code.
+    # Initialize parameters with Glorot / fan_avg.
+    for p in model.parameters():
+        if p.dim() > 1:
+            nn.init.xavier_uniform(p)
+    return model
+
+
+def make_funnel_model(src_vocab, tgt_vocab, N=6,
+               d_model=512, d_ff=2048, h=8, dropout=0.1,
+               max_length=-1):
+    "Helper: Construct a model from hyperparameters."
+    c = copy.deepcopy
+    attn = MultiHeadedAttention(h, d_model)
+    ff = PositionwiseFeedForward(d_model, d_ff, dropout)
+    position = PositionalEncoding(d_model, dropout,max_len=max_length)
+    model = EncoderDecoder(
+        Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
+        Decoder(DecoderLayer(d_model, c(attn), c(attn),
+                             c(ff), dropout), N),
+        nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
+        nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
+        Generator(d_model, tgt_vocab),N)
+
+
+    #model.reconfigure_compression()
     # This was important from their code.
     # Initialize parameters with Glorot / fan_avg.
     for p in model.parameters():

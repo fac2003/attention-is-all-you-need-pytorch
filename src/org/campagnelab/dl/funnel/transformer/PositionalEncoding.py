@@ -40,20 +40,3 @@ class PositionalEncoding(nn.Module):
         x = x + Variable(pe[:, :x.size(1)],
                          requires_grad=False)
         return self.dropout(x)
-
-class EmbeddingEncoding(nn.Module):
-    "Use instead of positional encoding to learn a positional embedding."
-
-    def __init__(self, d_model, dropout, max_len=5000):
-        super(EmbeddingEncoding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
-        self.embedding=nn.Embedding(max_len,d_model)
-        self.max_len=max_len
-        self.d_model=d_model
-
-
-    def forward(self, x):
-        pe = torch.zeros(self.max_len, self.d_model)
-        position = torch.arange(0, self.max_len).unsqueeze(1)
-        # we add the position embedding to x, then apply dropout:
-        return self.dropout(x + self.embedding(x))

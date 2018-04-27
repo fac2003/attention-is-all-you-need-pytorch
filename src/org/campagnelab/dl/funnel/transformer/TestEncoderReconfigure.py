@@ -1,9 +1,10 @@
 import unittest
 
 from src.org.campagnelab.dl.funnel.transformer.Attention import MultiHeadedAttention
-from src.org.campagnelab.dl.funnel.transformer.EncoderDecoder import Encoder, EncoderLayer
+from src.org.campagnelab.dl.funnel.transformer.Encoder import EncoderLayer, Encoder
 from src.org.campagnelab.dl.funnel.transformer.FeedForward import PositionwiseFeedForward
 from transformer.FunnelModels import DoubleEachLayerManager, ConstantDimLayerManager
+
 
 layer_manager=DoubleEachLayerManager(constant_dimension=16)
 #layer_manager=ConstantDimLayerManager(constant_dimension=16)

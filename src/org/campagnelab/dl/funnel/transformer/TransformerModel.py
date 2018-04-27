@@ -7,7 +7,7 @@ from src.org.campagnelab.dl.funnel.transformer.Encoder import Encoder, EncoderLa
 from src.org.campagnelab.dl.funnel.transformer.EncoderDecoder import EncoderDecoder
 from src.org.campagnelab.dl.funnel.transformer.FeedForward import PositionwiseFeedForward
 from src.org.campagnelab.dl.funnel.transformer.Generator import Generator
-from src.org.campagnelab.dl.funnel.transformer.PositionalEncoding import PositionalEncoding, EmbeddingEncoding
+from src.org.campagnelab.dl.funnel.transformer.PositionalEncoding import PositionalEncoding
 
 import torch.nn as nn
 

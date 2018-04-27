@@ -35,8 +35,8 @@ class EncoderLayer(nn.Module):
 
     def __init__(self, size, self_attn, feed_forward, dropout):
         super(EncoderLayer, self).__init__()
-        self.self_attn = self_attn
-        self.feed_forward = feed_forward
+        self.self_attn = clone(self_attn)
+        self.feed_forward = clone(feed_forward)
         self.sublayer = clones(FunnelSublayerConnection(size, dropout), 2)
         self.output_size = size
         self.layer_index = -1
@@ -44,12 +44,12 @@ class EncoderLayer(nn.Module):
     def reconfigure(self, layer_index, layer_manager):
         layer_dim_in = layer_manager.get_input_dim(layer_index)
         layer_dim_out = layer_manager.get_output_dim(layer_index)
-        clone(self.self_attn).reconfigure(layer_index, layer_manager)
-        clone(self.feed_forward).reconfigure(layer_index, layer_manager)
+        self.self_attn.reconfigure(layer_index, layer_manager)
+        self.feed_forward.reconfigure(layer_index, layer_manager)
         # the first one needs to output num_out dim from this layer.
-        clone(self.sublayer[0]).reconfigure(layer_index, layer_manager, layer_dim_in, layer_dim_out)
+        self.sublayer[0].reconfigure(layer_index, layer_manager, layer_dim_in, layer_dim_out)
         # the second one already sees layer_dim_out and converts to layer_dim_out again
-        clone(self.sublayer[1]).reconfigure(layer_index, layer_manager, layer_dim_out, layer_dim_out)
+        self.sublayer[1].reconfigure(layer_index, layer_manager, layer_dim_out, layer_dim_out)
         self.layer_index = layer_index
         self.output_size = layer_dim_out
         self.layer_dim_in = layer_dim_in

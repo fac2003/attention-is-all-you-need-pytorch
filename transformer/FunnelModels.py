@@ -8,11 +8,12 @@ import transformer.Constants as Constants
 from transformer.Modules import BottleLinear as Linear, LayerNormalization
 from transformer.Layers import EncoderLayer, DecoderLayer
 from transformer.PaddingBottleneck import PaddingBottleneck
+from transformer.SequenceAdjusters import SequenceLengthAdjuster
 from transformer.SubLayers import MultiHeadAttention, PositionwiseFeedForward
 
 # Code adapted from Yu-Hsiang Huang Transfomer implementation.
 __author__ = "Fabien Campagne"
-use_variable_encoding_sizes = True
+use_variable_encoding_sizes = False
 
 
 def position_encoding_init(n_position, d_pos_vec):
@@ -57,6 +58,7 @@ def get_attn_subsequent_mask(seq):
     if seq.is_cuda:
         subsequent_mask = subsequent_mask.cuda()
     return subsequent_mask
+
 
 
 class ProbabilisticSkipper(nn.Module):
@@ -293,7 +295,7 @@ class FunnelEncoderLayer(nn.Module):
     ''' Compose with two layers and add probabilistic token skipping '''
 
     def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1, layer_index=-1, layer_manager=None,
-                 skipper=ProbabilisticSkipper()):
+                 length_adjuster=None):
         super(FunnelEncoderLayer, self).__init__()
         assert layer_manager is None or layer_index != -1, "layer index must be defined"
         if layer_manager is None:
@@ -301,7 +303,7 @@ class FunnelEncoderLayer(nn.Module):
         d_model = layer_manager.get_input_dim(layer_index=layer_index)
         d_out = layer_manager.get_output_dim(layer_index=layer_index)
         print("encoder, layer_index={} d_model: {} d_out: {}".format(layer_index, d_model, d_out))
-
+        self.d_model_input=d_model
         self.slf_attn = MultiHeadAttention(
             n_head, d_model, d_k, d_v, dropout=dropout)
 
@@ -309,13 +311,15 @@ class FunnelEncoderLayer(nn.Module):
                                                      d_out,
                                                      layer_manager.get_hidden_dim(layer_index=layer_index),
                                                      dropout=dropout)
-        self.prob_estimator = SkippingProbability(encoding_dim=d_model)
-        self.skipper = skipper
+        self.length_adjuster=length_adjuster
+        self.reduction_rate=0.75
 
     def forward(self, enc_input, slf_attn_mask=None):
         # estimate skipping probabilities from input, and sample some tokens:
-        skip_probs = self.prob_estimator(enc_input)
-        enc_input = self.skipper(enc_input, skip_probs)
+        if self.length_adjuster:
+            output_length=int(enc_input.size(1)*self.reduction_rate)
+            enc_input = self.length_adjuster.adjust(enc_input, output_length=output_length,
+                                                    output_encoding_dim=self.d_model_input)
         # recalculate mask now that sequence lengths have changed:
         slf_attn_mask = get_attn_padding_mask(enc_input, enc_input)
         enc_output, enc_slf_attn = self.slf_attn(
@@ -329,7 +333,8 @@ class Encoder(nn.Module):
 
     def __init__(
             self, n_src_vocab, n_max_seq, n_layers=6, n_head=8, d_k=64, d_v=64,
-            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1):
+            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1,
+            length_adjuster=None):
 
         super(Encoder, self).__init__()
 
@@ -346,7 +351,8 @@ class Encoder(nn.Module):
             increase_factor=2)
         self.layer_stack = nn.ModuleList([
             FunnelEncoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout, layer_index=layer_index,
-                               layer_manager=layer_manager)
+                               layer_manager=layer_manager,
+                               length_adjuster=length_adjuster)
             for layer_index in range(n_layers)])
 
     def forward(self, src_seq, src_pos, return_attns=False):
@@ -380,7 +386,8 @@ class FunnelDecoderLayer(nn.Module):
     ''' Compose with three layers '''
 
     def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1, layer_index=-1,
-                 layer_manager=None, is_first_decoder_layer=False):
+                 layer_manager=None, is_first_decoder_layer=False,
+                 length_adjuster=None):
         super(FunnelDecoderLayer, self).__init__()
         if layer_manager is None:
             layer_manager = ConstantDimLayerManager(constant_dimension=d_model)
@@ -391,6 +398,7 @@ class FunnelDecoderLayer(nn.Module):
         self.layer_index = layer_index
         self.d_model = d_model_in
         d_out = layer_manager.get_output_dim(layer_index)
+        self.d_model_out=d_model_out
         print("decoder, layer_index={} d_model: {} d_out: {}".format(layer_index, d_model_in, d_out))
         # self attention works on initial-level encodings
         self.slf_attn = MultiHeadAttention(n_head, d_model_in, d_k, d_v, dropout=dropout)
@@ -399,6 +407,8 @@ class FunnelDecoderLayer(nn.Module):
                                                      d_output=d_model_out,
                                                      d_inner_hid=layer_manager.get_hidden_dim(layer_index),
                                                      dropout=dropout)
+        self.length_adjuster=length_adjuster
+        self.reduction_rate = 1/0.75
 
     def forward(self, previous_dec_output, enc_output, slf_attn_mask=None, dec_enc_attn_mask=None):
         """
@@ -422,6 +432,11 @@ class FunnelDecoderLayer(nn.Module):
         # dec_output, dec_slf_attn = self.slf_attn(dec_output, dec_output, dec_output, attn_mask=slf_attn_mask)
         dec_output = self.pos_ffn(dec_output)
 
+        if self.length_adjuster is not None:
+            output_length = int( dec_output.size(1) * self.reduction_rate)
+            dec_output = self.length_adjuster.adjust(dec_output, output_length=output_length,
+                                                    output_encoding_dim=self.d_model_out)
+
         return dec_output, dec_slf_attn, dec_enc_attn
 
 
@@ -430,7 +445,8 @@ class Decoder(nn.Module):
 
     def __init__(
             self, n_tgt_vocab, n_max_seq, n_layers=6, n_head=8, d_k=64, d_v=64,
-            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1):
+            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1,
+            length_adjuster=None):
 
         super(Decoder, self).__init__()
         n_position = n_max_seq + 1
@@ -451,7 +467,8 @@ class Decoder(nn.Module):
             FunnelDecoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout=dropout,
                                layer_index=(layer_index),
                                layer_manager=layer_manager,
-                               is_first_decoder_layer=layer_index == n_layers - 1)
+                               is_first_decoder_layer=layer_index == n_layers - 1,
+                               length_adjuster=length_adjuster)
             for layer_index in list(range(n_layers - 1, -1, -1))])
 
     def forward(self, tgt_seq, tgt_pos, src_seq, enc_output, return_attns=False):
@@ -500,14 +517,17 @@ class FunnelTransformer(nn.Module):
             dropout=0.1, proj_share_weight=True, embs_share_weight=True):
 
         super(FunnelTransformer, self).__init__()
+        length_adjuster=SequenceLengthAdjuster()
         self.encoder = Encoder(
             n_src_vocab, n_max_seq, n_layers=n_layers, n_head=n_head,
             d_word_vec=d_word_vec, d_model=d_model,
-            d_inner_hid=d_inner_hid, dropout=dropout)
+            d_inner_hid=d_inner_hid, dropout=dropout,
+            length_adjuster=length_adjuster)
         self.decoder = Decoder(
             n_tgt_vocab, n_max_seq, n_layers=n_layers, n_head=n_head,
             d_word_vec=d_word_vec, d_model=d_model,
-            d_inner_hid=d_inner_hid, dropout=dropout)
+            d_inner_hid=d_inner_hid, dropout=dropout,
+            length_adjuster=length_adjuster)
         self.tgt_word_proj = Linear(d_model, n_tgt_vocab, bias=False)
         self.dropout = nn.Dropout(dropout)
         self.padding_bottleneck = PaddingBottleneck()

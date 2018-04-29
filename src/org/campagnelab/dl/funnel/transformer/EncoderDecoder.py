@@ -15,7 +15,7 @@ class EncoderDecoder(nn.Module):
     def __init__(self, encoder, decoder, src_embed, tgt_embed, generator, N):
         super(EncoderDecoder, self).__init__()
         self.encoder_src = clone(encoder)
-        self.encoder_tgt = clone(encoder)
+        #self.encoder_tgt = clone(encoder)
         self.decoder = clone(decoder)
         self.src_embed = clone(src_embed)
         self.tgt_embed = clone(tgt_embed)
@@ -24,7 +24,7 @@ class EncoderDecoder(nn.Module):
 
     def reconfigure(self, layer_manager):
         self.encoder_src.reconfigure(layer_manager)
-        self.encoder_tgt.reconfigure(layer_manager)
+        #self.encoder_tgt.reconfigure(layer_manager)
         self.decoder.reconfigure(layer_manager)
         self.src_embed[1].reconfigure(layer_manager, self.N)
         encoded_dim=layer_manager.get_output_dim(layer_index=self.N-1)
@@ -32,8 +32,8 @@ class EncoderDecoder(nn.Module):
 
     def forward(self, src, tgt, src_mask, tgt_mask):
         "Take in and process masked src and target sequences."
-        return self.decode(self.encode(src, src_mask), src_mask,
-                           tgt, tgt_mask)
+        encoded, src_mask=self.encode(src, src_mask)
+        return self.decode(encoded, src_mask, tgt, tgt_mask)
 
     def encode(self, src, src_mask):
         return self.encoder_src(self.src_embed(src), src_mask)

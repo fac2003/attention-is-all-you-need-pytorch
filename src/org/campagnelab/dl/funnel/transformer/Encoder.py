@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 
 from src.org.campagnelab.dl.funnel.transformer.EncoderDecoder import clones, LayerNorm, FunnelSublayerConnection
+from src.org.campagnelab.dl.funnel.transformer.SequenceCompressors import SequenceCompressor
 
 clone=copy.deepcopy
 class Encoder(nn.Module):
@@ -26,9 +27,11 @@ class Encoder(nn.Module):
     def forward(self, x, mask):
         "Pass the input (and mask) through each layer in turn."
         for layer_index, layer in enumerate(self.layers):
-            x = layer(x, mask)
+            #print("Encoder {}".format(layer_index))
+
+            x, mask = layer(x, mask)
             x = self.norms[layer_index](x)
-        return x
+        return x,mask
 
 class EncoderLayer(nn.Module):
     "Encoder is made up of self-attn and feed forward (defined below)"
@@ -40,6 +43,7 @@ class EncoderLayer(nn.Module):
         self.sublayer = clones(FunnelSublayerConnection(size, dropout), 2)
         self.output_size = size
         self.layer_index = -1
+        self.compressor=SequenceCompressor(encoding_dim=size)
 
     def reconfigure(self, layer_index, layer_manager):
         layer_dim_in = layer_manager.get_input_dim(layer_index)
@@ -58,5 +62,6 @@ class EncoderLayer(nn.Module):
     def forward(self, x, mask):
         "Follow Figure 1 (left) for connections."
         x = self.sublayer[0](x, lambda x:        self.self_attn(x, x, x, mask))
-        return self.sublayer[1](x, self.feed_forward)
+        x= self.sublayer[1](x, self.feed_forward)
+        return self.compressor(x)
 

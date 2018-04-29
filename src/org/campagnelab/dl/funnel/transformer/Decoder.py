@@ -27,6 +27,7 @@ class Decoder(nn.Module):
 
     def forward(self, x, memory, src_mask, tgt_mask):
         for layer_index, layer in enumerate(self.layers):
+            #print("Decoder {}".format(layer_index))
             x = layer(x, memory, src_mask, tgt_mask)
             x = self.norms[layer_index](x)
         return x

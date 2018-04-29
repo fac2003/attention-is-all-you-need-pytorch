@@ -48,7 +48,7 @@ class MultiHeadedAttention(nn.Module):
             # Same mask applied to all h heads.
             mask = mask.unsqueeze(1)
         nbatches = query.size(0)
-        encoding_size=mask.size(3)
+
         #assert encoding_size==query.size(2)
         #assert encoding_size==key.size(2)
         #assert encoding_size==value.size(2)
